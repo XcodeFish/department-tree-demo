@@ -280,8 +280,8 @@ function clearSelection() {
 function setSelectedKeys(keys) {
   if (!Array.isArray(keys)) return;
   selectedKeys.value = [...keys];
-}
-
+  }
+  
 /**
  * 获取当前选中的节点ID数组
  * @returns {Array} 选中的节点ID数组
@@ -391,7 +391,7 @@ function handleSelect(nodeId) {
       // 清空之前的选中状态
       const oldCheckedKeys = [...checkedKeys.value];
       checkedKeys.value = [nodeId];
-      
+            
       // 如果启用级联选择，处理子节点
       if (!props.checkStrictly) {
         const node = nodeMapRef.value.get(nodeId);
@@ -430,13 +430,13 @@ function handleCheck(nodeId, checked) {
   // 获取节点
     const node = nodeMapRef.value.get(nodeId);
   if (!node || !props.checkable) return;
-
+    
   // 更新选中状态
   const index = checkedKeys.value.indexOf(nodeId);
   if (index > -1 && !checked) {
     // 如果已选中且取消选中
     checkedKeys.value.splice(index, 1);
-    
+      
     // 同步更新节点选中状态
       const selectedIndex = selectedKeys.value.indexOf(nodeId);
       if (selectedIndex > -1) {
@@ -468,9 +468,9 @@ function handleCheck(nodeId, checked) {
       updateParentChecked(node);
     }
     emit('check', [...checkedKeys.value], { checked: true, nodeIds: [nodeId] });
-  }
-}
-
+      }
+    }
+    
 /**
  * 更新子节点的选中状态
  */
@@ -497,8 +497,8 @@ function updateChildrenChecked(node, checked) {
             selectedKeys.value.push(childId);
     } else if (!checked && selectedIndex > -1) {
       selectedKeys.value.splice(selectedIndex, 1);
-    }
-    
+}
+
     // 递归处理子节点的子节点
     updateChildrenChecked(childNode, checked);
   });
@@ -582,7 +582,7 @@ function handleScroll(e) {
       visibleNodes.value = result.visibleNodes;
       totalTreeHeight.value = result.totalHeight;
       lastScrollTop.value = scrollTop.value;
-    }
+  }
   });
 }
 
@@ -909,7 +909,7 @@ function incrementalCalculateNodes(currentScrollTop, viewportHeight) {
   
   // 常规完整计算
   return calculateVisibleNodesInMainThread(currentScrollTop, viewportHeight);
-}
+  }
 </script>
 
 <style lang="scss">

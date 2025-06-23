@@ -33,3 +33,19 @@ yarn-error.log*
 
 # Mac OS
 .DS_Store
+
+
+# 开发文档
+docs/
+
+# Cursor编辑器配置
+.cursor/
+
+# 日志文件
+*.log
+
+# 依赖目录
+node_modules/
+
+# 构建输出
+dist/
