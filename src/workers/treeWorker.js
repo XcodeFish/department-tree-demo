@@ -59,29 +59,169 @@ function initializeData(flattenedData) {
   });
 }
 
-// 计算可见节点 (Worker版本的占位实现)
+// 计算可见节点
 function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
-  // 目前仅返回占位数据，后续实现完整逻辑
+  const visibleNodes = [];
+  let accumulatedHeight = 0;
+  let currentIndex = 0;
+  let visibleCount = 0;
+
+  // 遍历所有节点，计算可见性和位置
+  for (const [id, node] of nodeMap.entries()) {
+    const isVisible = isNodeVisible(node);
+
+    if (isVisible) {
+      const offsetTop = accumulatedHeight;
+      visibleCount++;
+
+      // 检查节点是否在可视区域内（包括缓冲区）
+      if (offsetTop >= scrollTop - (buffer * nodeHeight) &&
+          offsetTop <= scrollTop + viewportHeight + (buffer * nodeHeight)) {
+
+        visibleNodes.push({
+          ...node,
+          offsetTop,
+          index: currentIndex
+        });
+      }
+
+      accumulatedHeight += nodeHeight;
+      currentIndex++;
+    }
+  }
+
   return {
-    visibleNodes: [],
-    totalHeight: 1000,
-    visibleCount: 0
+    visibleNodes,
+    totalHeight: accumulatedHeight,
+    visibleCount
   };
+}
+
+// 节点可见性判断（带缓存）
+function isNodeVisible(node) {
+  if (visibilityCache.has(node.id)) {
+    return visibilityCache.get(node.id);
+  }
+
+  // 根节点总是可见
+  if (!node.parentId) {
+    visibilityCache.set(node.id, true);
+    return true;
+  }
+
+  // 递归检查父节点展开状态
+  let currentNode = node;
+  let isVisible = true;
+
+  while (currentNode.parentId) {
+    const parent = nodeMap.get(currentNode.parentId);
+    if (!parent || !parent.expanded) {
+      isVisible = false;
+      break;
+    }
+    currentNode = parent;
+  }
+
+  // 搜索过滤
+  if (node.searchActive && !node.matched) {
+    isVisible = false;
+  }
+
+  visibilityCache.set(node.id, isVisible);
+  return isVisible;
 }
 
 // 计算树的总高度
 function calculateTotalHeight() {
-  // 现阶段简单返回一个固定值，后续实现实际计算
-  return 1000;
+  let visibleNodeCount = 0;
+  for (const [id, node] of nodeMap.entries()) {
+    if (isNodeVisible(node)) {
+      visibleNodeCount++;
+    }
+  }
+  return visibleNodeCount * NODE_HEIGHT;
 }
 
 // 切换节点展开状态
 function toggleNodeExpanded(nodeId, expanded) {
-  // 占位函数，后续实现完整逻辑
+  const node = nodeMap.get(nodeId);
+  if (!node) return;
+
+  node.expanded = expanded;
+
+  // 清除可见性缓存，因为展开状态变化会影响子节点可见性
+  visibilityCache.clear();
+
+  // 重新计算树高度，通知主线程更新
+  const newHeight = calculateTotalHeight();
+  self.postMessage({
+    type: 'nodeToggled',
+    nodeId,
+    expanded,
+    totalHeight: newHeight
+  });
 }
 
 // 搜索节点
 function searchNodes(term) {
-  // 占位函数，后续实现完整逻辑
-  return { matchCount: 0, matches: [] };
+  // 重置搜索状态
+  for (const [id, node] of nodeMap.entries()) {
+    delete node.matched;
+  }
+  
+  // 清除可见性缓存
+  visibilityCache.clear();
+  
+  // 标记是否在搜索模式
+  for (const [id, node] of nodeMap.entries()) {
+    node.searchActive = !!term;
+  }
+  
+  if (!term) {
+    return { matchCount: 0, matches: [] };
+  }
+
+  const termLower = term.toLowerCase();
+  const matches = [];
+
+  // 标记匹配的节点
+  for (const [id, node] of nodeMap.entries()) {
+    // 增强搜索：搜索名称、职位、部门名称、电话、邮箱
+    const isMatch = node.name.toLowerCase().includes(termLower) ||
+                   (node.email && node.email.toLowerCase().includes(termLower)) ||
+                   (node.position && node.position.toLowerCase().includes(termLower)) ||
+                   (node.phone && node.phone.toLowerCase().includes(termLower)) ||
+                   (node.departmentName && node.departmentName.toLowerCase().includes(termLower));
+    node.matched = isMatch;
+    if (isMatch) {
+      matches.push(node.id);
+    }
+  }
+
+  // 展开包含匹配节点的路径
+  if (matches.length > 0) {
+    matches.forEach(matchId => {
+      expandNodePath(matchId);
+    });
+  }
+
+  return {
+    matchCount: matches.length,
+    matches
+  };
+}
+
+// 展开包含节点的所有父路径
+function expandNodePath(nodeId) {
+  let currentId = nodeMap.get(nodeId)?.parentId;
+
+  while (currentId) {
+    const parent = nodeMap.get(currentId);
+    if (parent) {
+      parent.expanded = true;
+      currentId = parent.parentId;
+    } else {
+      break;
+    }
+  }
 } 
