@@ -93,7 +93,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick, defineExpose } from 'vue';
 import { Search, Loading } from '@element-plus/icons-vue';
 import { ElInput, ElEmpty, ElIcon } from 'element-plus';
 import VirtualTreeNode from './VirtualTreeNode.vue';
@@ -274,11 +274,34 @@ function clearSelection() {
 }
 
 /**
+ * 设置选中的节点
+ * @param {Array} keys 要选中的节点ID数组
+ */
+function setSelectedKeys(keys) {
+  if (!Array.isArray(keys)) return;
+  selectedKeys.value = [...keys];
+}
+
+/**
+ * 获取当前选中的节点ID数组
+ * @returns {Array} 选中的节点ID数组
+ */
+function getSelectedKeys() {
+  return [...selectedKeys.value];
+}
+
+/**
  * 清除复选框选中状态
  */
 function clearChecked() {
   checkedKeys.value = [];
   indeterminateKeys.value = [];
+  
+  // 清除缓存
+  visibilityCache.value.clear();
+  
+  // 重新计算可见节点
+  updateWorkerVisibleNodes(scrollTop.value);
 }
 
 /**
@@ -295,6 +318,14 @@ function setCheckedKeys(keys, checked = true) {
     // 移除选中状态
     checkedKeys.value = checkedKeys.value.filter(key => !keys.includes(key));
   }
+}
+
+/**
+ * 获取当前复选框选中的节点ID数组
+ * @returns {Array} 复选框选中的节点ID数组
+ */
+function getCheckedKeys() {
+  return [...checkedKeys.value];
 }
 
 /**
@@ -382,12 +413,12 @@ function handleSelect(nodeId) {
  */
 function handleToggle(nodeId) {
   // 获取节点
-  const node = nodeMapRef.value.get(nodeId);
-  if (!node) return;
-  
-  // 更新本地节点状态
-  node.expanded = !node.expanded;
-  
+    const node = nodeMapRef.value.get(nodeId);
+    if (!node) return;
+
+    // 更新本地节点状态
+    node.expanded = !node.expanded;
+
   // 使用Worker处理或主线程处理
   workerHandleToggle(nodeId, node.expanded);
 }
@@ -397,7 +428,7 @@ function handleToggle(nodeId) {
  */
 function handleCheck(nodeId, checked) {
   // 获取节点
-  const node = nodeMapRef.value.get(nodeId);
+    const node = nodeMapRef.value.get(nodeId);
   if (!node || !props.checkable) return;
 
   // 更新选中状态
@@ -407,11 +438,11 @@ function handleCheck(nodeId, checked) {
     checkedKeys.value.splice(index, 1);
     
     // 同步更新节点选中状态
-    const selectedIndex = selectedKeys.value.indexOf(nodeId);
-    if (selectedIndex > -1) {
-      selectedKeys.value.splice(selectedIndex, 1);
-    }
-    
+      const selectedIndex = selectedKeys.value.indexOf(nodeId);
+      if (selectedIndex > -1) {
+        selectedKeys.value.splice(selectedIndex, 1);
+      }
+      
     // 严格模式下不处理关联节点
     if (!props.checkStrictly) {
       // 更新子节点状态
@@ -422,13 +453,13 @@ function handleCheck(nodeId, checked) {
     emit('check', [...checkedKeys.value], { checked: false, nodeIds: [nodeId] });
   } else if (index === -1 && checked) {
     // 如果未选中且选中
-    checkedKeys.value.push(nodeId);
-    
+      checkedKeys.value.push(nodeId);
+      
     // 同步更新节点选中状态
-    if (!selectedKeys.value.includes(nodeId)) {
-      selectedKeys.value.push(nodeId);
-    }
-    
+      if (!selectedKeys.value.includes(nodeId)) {
+        selectedKeys.value.push(nodeId);
+      }
+      
     // 严格模式下不处理关联节点
     if (!props.checkStrictly) {
       // 更新子节点状态
@@ -452,18 +483,18 @@ function updateChildrenChecked(node, checked) {
     if (!childNode) return;
     
     const checkIndex = checkedKeys.value.indexOf(childId);
-    const selectedIndex = selectedKeys.value.indexOf(childId);
+          const selectedIndex = selectedKeys.value.indexOf(childId);
     
     // 更新复选框状态
     if (checked && checkIndex === -1) {
-      checkedKeys.value.push(childId);
+          checkedKeys.value.push(childId);
     } else if (!checked && checkIndex > -1) {
       checkedKeys.value.splice(checkIndex, 1);
     }
-    
+          
     // 同步更新节点选中状态
     if (checked && selectedIndex === -1) {
-      selectedKeys.value.push(childId);
+            selectedKeys.value.push(childId);
     } else if (!checked && selectedIndex > -1) {
       selectedKeys.value.splice(selectedIndex, 1);
     }
@@ -522,30 +553,16 @@ function updateParentChecked(node) {
   updateParentChecked(parent);
 }
 
-// 导出组件方法
+// 这些方法已经在前面定义过了
+
+// 暴露方法给父组件
 defineExpose({
   clearSelection,
   clearChecked,
-  getSelectedKeys: () => selectedKeys.value,
-  getCheckedKeys: () => checkedKeys.value,
-  getIndeterminateKeys: () => indeterminateKeys.value,
-  setSelectedKeys: (keys) => {
-    selectedKeys.value = Array.isArray(keys) ? keys : [];
-  },
+  setSelectedKeys,
   setCheckedKeys,
-  // 获取半选状态的节点
-  getHalfCheckedKeys: () => indeterminateKeys.value,
-  // 获取选中的节点数据
-  getCheckedNodes: () => {
-    return checkedKeys.value.map(id => nodeMapRef.value.get(id)).filter(Boolean);
-  },
-  // 获取选中的叶子节点
-  getCheckedLeafKeys: () => {
-    return checkedKeys.value.filter(id => {
-      const node = nodeMapRef.value.get(id);
-      return node && (!node.children || node.children.length === 0);
-    });
-  }
+  getSelectedKeys,
+  getCheckedKeys
 });
 
 /**
@@ -710,7 +727,7 @@ function expandMatchNodePath(nodeId) {
     if (parent) {
       parent.expanded = true;
       currentId = parent.parentId;
-    } else {
+  } else {
       break;
     }
   }
@@ -723,11 +740,11 @@ function calculateVisibleNodesInMainThread(scrollPosition, viewportHeight) {
   const buffer = Math.ceil(viewportHeight / props.nodeHeight) * 2;
   const startIndex = Math.max(0, Math.floor(scrollPosition / props.nodeHeight) - buffer);
   const visibleCount = Math.ceil(viewportHeight / props.nodeHeight) + buffer * 2;
-  
+
   const result = [];
   let currentTop = 0;
   let currentIndex = 0;
-  
+
   for (let i = 0; i < flattenedData.value.length; i++) {
     const node = flattenedData.value[i];
     if (!node) continue;
@@ -791,11 +808,11 @@ watch(selectedKeys, (newSelected) => {
           if (node) {
             updateChildrenChecked(node, true);
             updateParentChecked(node);
+            }
           }
         }
-      }
-    });
-  }
+      });
+    }
 }, { deep: true });
 
 // 监听复选框状态变化，自动同步选中状态

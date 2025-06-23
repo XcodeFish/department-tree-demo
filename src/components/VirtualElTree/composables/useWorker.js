@@ -94,7 +94,8 @@ export function useWorker(options) {
         nodeHeight: nodeHeight
       });
     } catch (err) {
-      console.error('Worker初始化失败:', err);
+      // Worker初始化失败，回退到主线程处理模式
+      workerRef.value = null;
     }
   }
 
