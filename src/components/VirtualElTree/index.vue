@@ -78,6 +78,14 @@
       <span>搜索中...</span>
     </div>
 
+    <!-- 搜索结果计数 -->
+    <div 
+      v-if="searchResults.matchCount > 0" 
+      class="virtual-el-tree-search-count"
+    >
+      匹配: {{ searchResults.matchCount }}
+    </div>
+
     <div v-if="multiple && selectedKeys.length > 0" class="virtual-el-tree-selected-count">
       已选: {{ selectedKeys.length }}
     </div>
@@ -172,6 +180,13 @@ const containerRef = ref(null);
 
 // 搜索相关状态
 const searchValue = ref('');
+const searchLoading = ref(false);
+const searchResults = shallowRef({
+  matches: [],
+  matchCount: 0,
+  searchTerm: '',
+  lastSearchTime: 0
+});
 
 // 状态定义
 const visibleNodes = shallowRef([]);
@@ -182,6 +197,15 @@ const checkedKeys = ref(props.defaultCheckedKeys || []);
 const indeterminateKeys = ref([]);
 const visibilityCache = ref(new Map());
 const nodeMapRef = ref(new Map());
+
+// 上次滚动位置，用于增量计算
+const lastScrollTop = ref(0);
+// 节点差异缓存，用于增量计算
+const diffCache = ref({
+  lastVisibleRange: { start: 0, end: 0 },
+  cachedNodes: new Map(),
+  lastComputeTime: 0
+});
 
 // 初始化时同步选中状态和复选框状态
 onMounted(() => {
@@ -206,23 +230,28 @@ onMounted(() => {
   }
 });
 
-// 处理树数据
+// 使用计算属性优化性能
 const processedData = computed(() => {
-  const processed = processTreeData(props.treeData || []);
-  nodeMapRef.value = processed.nodeMap;
-  visibilityCache.value = processed.visibilityCache;
-  return processed;
+  const result = processTreeData(props.treeData || []);
+  nodeMapRef.value = result.nodeMap;
+  visibilityCache.value = result.visibilityCache;
+  return result;
 });
 
-const flattenedData = computed(() => processedData.value.flattenedData || []);
+// 使用shallowRef优化大数组性能
+const flattenedData = shallowRef([]);
+
+// 监听处理后的数据更新扁平化结果
+watch(() => processedData.value, (newData) => {
+  flattenedData.value = newData.flattenedData;
+}, { immediate: true });
 
 // 使用组合式API: Worker管理
 const {
   workerRef,
-  searchLoading,
   initializeWorker,
-  updateVisibleNodes,
-  handleToggle: handleWorkerToggle,
+  updateVisibleNodes: updateWorkerVisibleNodes,
+  handleToggle: workerHandleToggle,
   handleSearch: handleWorkerSearch,
   destroyWorker
 } = useWorker({
@@ -233,6 +262,7 @@ const {
   scrollTop,
   totalTreeHeight,
   visibleNodes,
+  searchResults,
   emit
 });
 
@@ -359,7 +389,7 @@ function handleToggle(nodeId) {
   node.expanded = !node.expanded;
   
   // 使用Worker处理或主线程处理
-  handleWorkerToggle(nodeId, node.expanded);
+  workerHandleToggle(nodeId, node.expanded);
 }
 
 /**
@@ -526,7 +556,16 @@ function handleScroll(e) {
 
   // 使用requestAnimationFrame优化滚动性能
   window.requestAnimationFrame(() => {
-    updateVisibleNodes(scrollTop.value);
+    // 调用Worker版本的更新函数
+    if (props.performanceMode && workerRef.value) {
+      updateWorkerVisibleNodes(scrollTop.value);
+    } else {
+      // 主线程模式
+      const result = incrementalCalculateNodes(scrollTop.value, props.height);
+      visibleNodes.value = result.visibleNodes;
+      totalTreeHeight.value = result.totalHeight;
+      lastScrollTop.value = scrollTop.value;
+    }
   });
 }
 
@@ -535,8 +574,146 @@ function handleScroll(e) {
  */
 function handleSearch(term) {
   searchValue.value = term;
-  handleWorkerSearch(term);
+  searchLoading.value = true;
+  
+  // 重置搜索结果
+  searchResults.value = {
+    ...searchResults.value,
+    searchTerm: term,
+    lastSearchTime: Date.now()
+  };
+
+  if (props.performanceMode && workerRef.value) {
+    // Worker模式搜索
+    handleWorkerSearch(term);
+  } else {
+    // 主线程搜索处理
+    performMainThreadSearch(term);
+  }
+  
   emit('search', term);
+}
+
+/**
+ * 主线程执行搜索逻辑
+ * @param {String} term 搜索关键词
+ */
+function performMainThreadSearch(term) {
+  // 清除先前的匹配状态
+  flattenedData.value.forEach(node => {
+    delete node.matched;
+    delete node.matchScore;
+  });
+
+  // 清除可见性缓存，因为展开状态可能会变化
+  visibilityCache.value.clear();
+  
+  if (!term) {
+    // 如果搜索词为空，直接更新视图
+    // 调用主线程计算
+    const result = incrementalCalculateNodes(scrollTop.value, props.height);
+    visibleNodes.value = result.visibleNodes;
+    totalTreeHeight.value = result.totalHeight;
+    lastScrollTop.value = scrollTop.value;
+    
+    searchLoading.value = false;
+    
+    // 重置搜索结果
+    searchResults.value = {
+      matches: [],
+      matchCount: 0,
+      searchTerm: '',
+      lastSearchTime: Date.now()
+    };
+    
+    return;
+  }
+
+  const termLower = term.toLowerCase();
+  const matches = [];
+  const matchScores = new Map(); // 用于存储匹配得分，优先显示高匹配度的结果
+
+  // 标记匹配的节点
+  for (let i = 0; i < flattenedData.value.length; i++) {
+    const node = flattenedData.value[i];
+    
+    // 搜索字段包括名称、邮箱和职位
+    const nameMatch = node.name && node.name.toLowerCase().includes(termLower);
+    const labelMatch = node.label && node.label.toLowerCase().includes(termLower);
+    const emailMatch = node.email && node.email.toLowerCase().includes(termLower);
+    const positionMatch = node.position && node.position.toLowerCase().includes(termLower);
+    
+    // 计算匹配得分
+    let score = 0;
+    if (nameMatch || labelMatch) score += 10; // 名称匹配优先级最高
+    if (emailMatch) score += 5;               // 邮箱次之
+    if (positionMatch) score += 3;            // 职位再次之
+    
+    const isMatch = nameMatch || labelMatch || emailMatch || positionMatch;
+    
+    if (isMatch) {
+      node.matched = true;
+      node.matchScore = score;
+      matchScores.set(node.id, score);
+      matches.push(node.id);
+    }
+  }
+
+  // 对匹配结果进行排序（可用于优先展示高匹配度的结果）
+  matches.sort((a, b) => {
+    return (matchScores.get(b) || 0) - (matchScores.get(a) || 0);
+  });
+
+  // 为匹配的节点展开父路径
+  if (matches.length > 0) {
+    matches.forEach(matchId => {
+      expandMatchNodePath(matchId);
+    });
+  }
+
+  // 更新搜索结果状态
+  searchResults.value = {
+    matches,
+    matchCount: matches.length,
+    searchTerm: term,
+    lastSearchTime: Date.now()
+  };
+
+  // 更新视图
+  if (props.performanceMode && workerRef.value) {
+    updateWorkerVisibleNodes(scrollTop.value);
+  } else {
+    // 主线程计算
+    const result = incrementalCalculateNodes(scrollTop.value, props.height);
+    visibleNodes.value = result.visibleNodes;
+    totalTreeHeight.value = result.totalHeight;
+    lastScrollTop.value = scrollTop.value;
+  }
+  
+  searchLoading.value = false;
+  
+  // 发出搜索完成事件
+  emit('search', term, matches.length, matches);
+}
+
+/**
+ * 展开匹配节点的父路径
+ * @param {String} nodeId 节点ID
+ */
+function expandMatchNodePath(nodeId) {
+  const node = nodeMapRef.value.get(nodeId);
+  if (!node) return;
+  
+  let currentId = node.parentId;
+  while (currentId) {
+    const parent = nodeMapRef.value.get(currentId);
+    if (parent) {
+      parent.expanded = true;
+      currentId = parent.parentId;
+    } else {
+      break;
+    }
+  }
 }
 
 /**
@@ -631,6 +808,91 @@ watch(checkedKeys, (newChecked) => {
 onUnmounted(() => {
   destroyWorker();
 });
+
+/**
+ * 增量计算可见节点
+ * @param {Number} currentScrollTop 当前滚动位置
+ * @param {Number} viewportHeight 视口高度
+ * @returns {Array} 可见节点列表
+ */
+function incrementalCalculateNodes(currentScrollTop, viewportHeight) {
+  const now = performance.now();
+  const buffer = Math.ceil(viewportHeight / props.nodeHeight) * 2;
+  
+  // 计算当前可见范围
+  const startIndex = Math.max(0, Math.floor(currentScrollTop / props.nodeHeight) - buffer);
+  const endIndex = Math.ceil((currentScrollTop + viewportHeight) / props.nodeHeight) + buffer;
+  const currentRange = { start: startIndex, end: endIndex };
+  
+  // 获取上次计算的范围
+  const { lastVisibleRange, cachedNodes, lastComputeTime } = diffCache.value;
+  
+  // 如果滚动距离小，使用增量计算
+  const scrollDistanceSmall = Math.abs(currentScrollTop - lastScrollTop.value) < 300;
+  const timeDiffSmall = now - lastComputeTime < 300;
+  
+  if (scrollDistanceSmall && timeDiffSmall &&
+      (currentRange.start >= lastVisibleRange.start - buffer/2 && 
+       currentRange.end <= lastVisibleRange.end + buffer/2)) {
+    
+    // 使用缓存的节点，只计算差异
+    const result = [];
+    let currentTop = 0;
+    let visibleIndex = 0;
+    
+    for (let i = 0; i < flattenedData.value.length; i++) {
+      const node = flattenedData.value[i];
+      if (!node) continue;
+      
+      // 使用缓存的可见性判断
+      let isVisible;
+      if (cachedNodes.has(node.id)) {
+        const cachedData = cachedNodes.get(node.id);
+        isVisible = cachedData.isVisible;
+        currentTop = cachedData.offsetTop;
+        visibleIndex = cachedData.visibleIndex;
+      } else {
+        isVisible = isNodeVisible(node, nodeMapRef.value, visibilityCache.value);
+      }
+      
+      if (isVisible) {
+        // 检查是否在当前可视区域
+        if (visibleIndex >= startIndex && visibleIndex <= endIndex) {
+          result.push({
+            ...node,
+            offsetTop: currentTop,
+            index: visibleIndex
+          });
+        }
+        
+        // 更新或添加到缓存
+        cachedNodes.set(node.id, {
+          isVisible,
+          offsetTop: currentTop,
+          visibleIndex
+        });
+        
+        currentTop += props.nodeHeight;
+        visibleIndex++;
+      }
+    }
+    
+    // 更新缓存
+    diffCache.value = {
+      lastVisibleRange: currentRange,
+      cachedNodes,
+      lastComputeTime: now
+    };
+    
+    return {
+      visibleNodes: result,
+      totalHeight: currentTop
+    };
+  }
+  
+  // 常规完整计算
+  return calculateVisibleNodesInMainThread(currentScrollTop, viewportHeight);
+}
 </script>
 
 <style lang="scss">

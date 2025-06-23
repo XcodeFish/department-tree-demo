@@ -19,6 +19,7 @@ export function useWorker(options) {
     scrollTop,
     totalTreeHeight,
     visibleNodes,
+    searchResults,
     emit
   } = options;
 
@@ -68,6 +69,20 @@ export function useWorker(options) {
           case 'searchComplete':
             searchLoading.value = false;
             updateVisibleNodes(scrollTop.value);
+            
+            // 更新搜索结果状态
+            if (searchResults) {
+              searchResults.value = {
+                matches: data.matches || [],
+                matchCount: data.matchCount || 0,
+                searchTerm: data.searchTerm || '',
+                lastSearchTime: Date.now(),
+                timeTaken: data.timeTaken
+              };
+            }
+            
+            // 传递搜索结果细节
+            emit('search', data.searchTerm, data.matchCount, data.matches);
             break;
         }
       };

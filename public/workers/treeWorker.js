@@ -248,6 +248,7 @@ function searchNodes(term) {
   // 清除旧的匹配状态
   flattenedData.forEach(node => {
     delete node.matched;
+    delete node.matchScore;
   });
 
   if (!term) {
@@ -255,6 +256,7 @@ function searchNodes(term) {
     visibilityCache.clear();
     self.postMessage({
       type: 'searchComplete',
+      searchTerm: term,
       matchCount: 0,
       matches: []
     });
@@ -263,22 +265,38 @@ function searchNodes(term) {
 
   const termLower = term.toLowerCase();
   const matches = [];
+  const matchScores = new Map(); // 用于存储匹配得分
 
   // 标记匹配的节点
   for (let i = 0; i < flattenedData.length; i++) {
     const node = flattenedData[i];
     
     // 搜索字段包括名称、邮箱和职位
-    const isMatch = (node.name && node.name.toLowerCase().includes(termLower)) ||
-                   (node.label && node.label.toLowerCase().includes(termLower)) ||
-                   (node.email && node.email.toLowerCase().includes(termLower)) ||
-                   (node.position && node.position.toLowerCase().includes(termLower));
+    const nameMatch = node.name && node.name.toLowerCase().includes(termLower);
+    const labelMatch = node.label && node.label.toLowerCase().includes(termLower);
+    const emailMatch = node.email && node.email.toLowerCase().includes(termLower);
+    const positionMatch = node.position && node.position.toLowerCase().includes(termLower);
+    
+    // 计算匹配得分
+    let score = 0;
+    if (nameMatch || labelMatch) score += 10; // 名称匹配优先级最高
+    if (emailMatch) score += 5;               // 邮箱次之
+    if (positionMatch) score += 3;            // 职位再次之
+    
+    const isMatch = nameMatch || labelMatch || emailMatch || positionMatch;
     
     if (isMatch) {
       node.matched = true;
+      node.matchScore = score;
+      matchScores.set(node.id, score);
       matches.push(node.id);
     }
   }
+
+  // 对匹配结果进行排序
+  matches.sort((a, b) => {
+    return (matchScores.get(b) || 0) - (matchScores.get(a) || 0);
+  });
 
   // 为匹配的节点展开父路径
   if (matches.length > 0) {
@@ -290,11 +308,25 @@ function searchNodes(term) {
   // 清除可见性缓存，因为展开状态已变化
   visibilityCache.clear();
   
+  // 构建详细的搜索结果
+  const searchResult = {
+    searchTerm: term,
+    matchCount: matches.length,
+    matches: matches,
+    // 包含匹配得分
+    matchDetails: matches.map(id => ({
+      id,
+      score: matchScores.get(id) || 0,
+      node: nodeMap.get(id)
+    })),
+    // 计算搜索完成时间，用于性能监控
+    timeTaken: performance.now() - performance.timeOrigin
+  };
+
   // 通知搜索完成
   self.postMessage({
     type: 'searchComplete',
-    matchCount: matches.length,
-    matches
+    ...searchResult
   });
 }
 
