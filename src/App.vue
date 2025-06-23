@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { ElCard, ElButton, ElSwitch, ElMessage, ElTable, ElTableColumn, ElDialog, ElInputNumber, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus';
+import { ElCard, ElButton, ElSwitch, ElMessage, ElTable, ElTableColumn, ElDialog, ElInputNumber, ElDropdown, ElDropdownMenu, ElDropdownItem, ElSelect, ElOption, ElTabs, ElTabPane, ElScrollbar, ElTag } from 'element-plus';
 import { ArrowDown } from '@element-plus/icons-vue';
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs';
 import VirtualElTree from './components/VirtualElTree/index.vue';
@@ -17,16 +17,19 @@ const showSearch = ref(true);
 const multiple = ref(true);
 const checkable = ref(true);
 const selectedKeys = ref([]);
+const checkedKeys = ref([]);
+const indeterminateKeys = ref([]);
 const visibleNodeCount = ref(0);
 const selectedUsers = ref([]);
 const isDetailDialogVisible = ref(false);
 const currentUser = ref(null);
 const dataSize = ref('medium');
 const treeRef = ref(null);
-const selectedNodes = ref([]);
+const selectedNodesArray = ref([]);
 const visibleNodes = ref(0);
 const totalNodes = ref(0);
 const searchMatches = ref(0);
+const checkStrictly = ref(false);
 
 // 选中节点状态
 const selectedNodesMap = ref(new Map());
@@ -38,13 +41,20 @@ onMounted(() => {
 
 // 处理节点选择
 const handleSelect = (keys, info) => {
+  // 直接使用传入的keys作为选中状态
   selectedKeys.value = keys;
   
-  // 更新已选人员列表
-  selectedUsers.value = keys.map(key => {
+  // 更新已选人员列表 - 只包含类型为user的节点
+  const userNodes = keys.map(key => {
     const node = findNodeById(treeData.value, key);
     return node?.type === 'user' ? node : null;
   }).filter(Boolean); // 过滤掉null和非人员节点
+  
+  selectedUsers.value = userNodes;
+  
+  // 注意：不再在这里处理复选框状态，因为VirtualElTree组件内部已经处理了
+  
+  console.log('选中节点变化:', keys, userNodes.length, selectedUsers.value);
 };
 
 // 处理可见节点变化
@@ -91,16 +101,20 @@ const generateLessData = () => {
 
 // 递归查找节点
 const findNodeById = (nodes, id) => {
-  if (!nodes) return null;
-
+  if (!nodes || !Array.isArray(nodes)) return null;
+  
   for (const node of nodes) {
-    if (node.id === id) return node;
-
-    if (node.children) {
+    if (node.id === id) {
+      console.log('找到节点:', id, node);
+      return node;
+    }
+    
+    if (node.children && Array.isArray(node.children)) {
       const found = findNodeById(node.children, id);
       if (found) return found;
     }
   }
+  
   return null;
 };
 
@@ -337,12 +351,30 @@ const handleSearch = (count, matches) => {
   }
 };
 
-// 清除选择
+// 计算属性
+const selectedNodesList = computed(() => {
+  // 直接使用selectedUsers，它已经包含了所有类型为user的节点
+  return selectedUsers.value;
+});
+
+const checkedNodes = computed(() => {
+  return checkedKeys.value.map(id => findNodeById(treeData.value, id)).filter(Boolean);
+});
+
+// 清空选择
 const clearSelection = () => {
-  selectedNodes.value = [];
   if (treeRef.value) {
-    // 这里应该调用树组件提供的清除选择方法
-    // 因为当前组件可能没有暴露这个方法，所以这里只是清除了本地状态
+    treeRef.value.clearSelection();
+    selectedKeys.value = [];
+  }
+};
+
+// 清空勾选
+const clearChecked = () => {
+  if (treeRef.value) {
+    treeRef.value.clearChecked();
+    checkedKeys.value = [];
+    indeterminateKeys.value = [];
   }
 };
 
@@ -352,7 +384,7 @@ const takeSnapshot = () => {
     timestamp: new Date().toISOString(),
     totalNodes: totalNodes.value,
     visibleNodes: visibleNodes.value,
-    selectedNodes: selectedNodes.value.length,
+    selectedNodes: selectedNodesList.value.length,
     performanceMode: performanceMode.value,
     searchMatches: searchMatches.value
   };
@@ -365,124 +397,136 @@ const takeSnapshot = () => {
 <template>
   <div class="app-container">
     <el-config-provider :locale="locale">
-      <el-card class="department-tree-card">
+      <el-card class="tree-card">
         <template #header>
           <div class="card-header">
-            <span class="title">部门树演示</span>
+            <h3>部门树组件演示</h3>
             <div class="controls">
+              <el-select v-model="dataSize" placeholder="数据规模" style="width: 120px;" @change="generateData">
+                <el-option label="小规模 (100)" value="small" />
+                <el-option label="中规模 (500)" value="medium" />
+                <el-option label="大规模 (1000)" value="large" />
+                <el-option label="超大规模 (3000)" value="huge" />
+              </el-select>
+              
               <el-switch
                 v-model="performanceMode"
                 active-text="性能模式"
                 inactive-text="普通模式"
-                class="control-item"
+                class="ml-10"
               />
+              
               <el-switch
-                v-model="checkable"
-                active-text="复选框"
-                inactive-text="无复选框"
-                class="control-item"
+                v-model="checkStrictly"
+                active-text="严格选择"
+                inactive-text="级联选择"
+                class="ml-10"
               />
-              <el-switch
-                v-model="multiple"
-                active-text="多选"
-                inactive-text="单选"
-                class="control-item"
-              />
-              <el-button @click="generateData" class="control-item">生成测试数据</el-button>
-              <el-dropdown @command="handleSizeCommand" class="control-item">
-                <el-button>
-                  数据规模: {{ dataSize }} <el-icon class="el-icon--right"><arrow-down /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="small">小规模 (100)</el-dropdown-item>
-                    <el-dropdown-item command="medium">中规模 (1000)</el-dropdown-item>
-                    <el-dropdown-item command="large">大规模 (5000)</el-dropdown-item>
-                    <el-dropdown-item command="huge">超大规模 (8000+)</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              
+              <el-button type="primary" @click="generateData" :loading="loading">生成测试数据</el-button>
             </div>
           </div>
         </template>
-
-        <div class="content-layout">
-          <div class="tree-container">
+        
+        <div v-if="loading" class="loading-container" v-loading="true" element-loading-text="生成测试数据中...">
+        </div>
+        
+        <div v-else class="tree-container">
+          <div class="tree-wrapper">
             <virtual-el-tree
-              v-if="treeData.length"
               ref="treeRef"
               :tree-data="treeData"
               :height="600"
               :loading="loading"
               :performance-mode="performanceMode"
-              :multiple="multiple"
-              :checkable="checkable"
-              :search-placeholder="'搜索部门或人员...'"
+              :check-strictly="checkStrictly"
+              :show-search="true"
+              :multiple="true"
+              :checkable="true"
+              search-placeholder="搜索部门或人员..."
               @select="handleSelect"
               @check="handleCheck"
-              @visible-nodes-change="handleVisibleNodesChange"
-              @search="handleSearch"
+              @expand="handleExpand"
             />
-            <el-empty v-else description="请生成测试数据" />
           </div>
-
+          
           <div class="info-panel">
-            <el-card class="selection-info">
-              <template #header>
-                <div class="panel-header">
-                  <span>选择信息</span>
-                  <el-button text @click="clearSelection">清除选择</el-button>
+            <el-tabs>
+              <el-tab-pane label="选中信息">
+                <div class="selection-info">
+                  <div class="info-header">
+                    <h4>已选择 {{ selectedNodesList.length }} 人</h4>
+                    <el-button type="text" @click="clearSelection">清空选择</el-button>
+                  </div>
+                  
+                  <el-scrollbar height="200px">
+                    <div v-if="selectedNodesList.length === 0" class="empty-tip">
+                      请在左侧点击选择节点
+                    </div>
+                    <div v-else class="selected-list">
+                      <div v-for="node in selectedNodesList" :key="node.id" class="selected-item">
+                        <el-tag size="small" type="success">人员</el-tag>
+                        <span class="name">{{ node.name }}</span>
+                        <span v-if="node.position" class="position">{{ node.position }}</span>
+                      </div>
+                    </div>
+                  </el-scrollbar>
                 </div>
-              </template>
+              </el-tab-pane>
               
-              <el-empty v-if="!selectedNodes.length" description="未选择任何节点" />
-              <el-scrollbar v-else height="200px">
-                <div class="selected-item" v-for="node in selectedNodes" :key="node.id">
-                  <el-avatar v-if="node.type === 'user'" :size="24" :src="node.avatar" class="avatar">
-                    {{ node.name?.substring(0, 1) }}
-                  </el-avatar>
-                  <el-icon v-else><folder /></el-icon>
-                  <span class="node-name">{{ node.name }}</span>
-                  <span v-if="node.type === 'user'" class="node-position">{{ node.position }}</span>
+              <el-tab-pane label="复选框选中">
+                <div class="selection-info">
+                  <div class="info-header">
+                    <h4>已勾选 {{ checkedKeys.length }} 项</h4>
+                    <el-button type="text" @click="clearChecked">清空勾选</el-button>
+                  </div>
+                  
+                  <el-scrollbar height="200px">
+                    <div v-if="checkedNodes.length === 0" class="empty-tip">
+                      请在左侧勾选复选框
+                    </div>
+                    <div v-else class="selected-list">
+                      <div v-for="node in checkedNodes" :key="node.id" class="selected-item">
+                        <el-tag size="small" :type="node.type === 'user' ? 'success' : 'info'">
+                          {{ node.type === 'user' ? '人员' : '部门' }}
+                        </el-tag>
+                        <span class="name">{{ node.name }}</span>
+                        <span v-if="node.position" class="position">{{ node.position }}</span>
+                      </div>
+                    </div>
+                  </el-scrollbar>
                 </div>
-              </el-scrollbar>
-            </el-card>
-
-            <el-card class="performance-stats">
-              <template #header>
-                <div class="panel-header">
-                  <span>性能信息</span>
-                  <el-button text @click="takeSnapshot">Take Snapshot</el-button>
+              </el-tab-pane>
+              
+              <el-tab-pane label="性能信息">
+                <div class="performance-info">
+                  <div class="info-item">
+                    <span class="label">总节点数:</span>
+                    <span class="value">{{ totalNodes }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="label">当前可见节点:</span>
+                    <span class="value">{{ visibleNodesCount }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="label">已选中节点:</span>
+                    <span class="value">{{ selectedKeys.length }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="label">已勾选节点:</span>
+                    <span class="value">{{ checkedKeys.length }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="label">半选状态节点:</span>
+                    <span class="value">{{ indeterminateKeys.length }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="label">Worker模式:</span>
+                    <span class="value">{{ performanceMode ? '启用' : '禁用' }}</span>
+                  </div>
                 </div>
-              </template>
-              <div class="stats-content">
-                <div class="stat-item">
-                  <span class="label">总节点数:</span>
-                  <span class="value">{{ totalNodes }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="label">当前可见:</span>
-                  <span class="value">{{ visibleNodes }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="label">选中节点:</span>
-                  <span class="value">{{ selectedNodes.length }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="label">渲染模式:</span>
-                  <span class="value">{{ performanceMode ? 'Worker多线程' : '主线程' }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="label">搜索匹配:</span>
-                  <span class="value">{{ searchMatches }}</span>
-                </div>
-                <el-progress 
-                  :percentage="(visibleNodes/100)" 
-                  :format="() => `${visibleNodes}/${totalNodes}`"
-                  :status="performanceMode ? 'success' : 'warning'"
-                ></el-progress>
-              </div>
-            </el-card>
+              </el-tab-pane>
+            </el-tabs>
           </div>
         </div>
       </el-card>
@@ -490,113 +534,115 @@ const takeSnapshot = () => {
   </div>
 </template>
 
-<style lang="scss">
+<style lang="scss" scoped>
 .app-container {
+  padding: 20px;
   max-width: 1200px;
-  margin: 20px auto;
-  padding: 0 20px;
+  margin: 0 auto;
+}
+
+.tree-card {
+  margin-bottom: 20px;
   
-  .department-tree-card {
-    .card-header {
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    
+    h3 {
+      margin: 0;
+    }
+    
+    .controls {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      
-      .title {
-        font-size: 18px;
-        font-weight: bold;
+      gap: 10px;
+    }
+  }
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+}
+
+.tree-container {
+  display: flex;
+  gap: 20px;
+  
+  .tree-wrapper {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .info-panel {
+    width: 350px;
+    
+    .selection-info {
+      .info-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        
+        h4 {
+          margin: 0;
+        }
       }
       
-      .controls {
-        display: flex;
-        align-items: center;
-        
-        .control-item {
-          margin-left: 12px;
+      .empty-tip {
+        color: var(--el-text-color-secondary);
+        text-align: center;
+        padding: 30px 0;
+      }
+      
+      .selected-list {
+        .selected-item {
+          display: flex;
+          align-items: center;
+          padding: 8px 0;
+          border-bottom: 1px solid var(--el-border-color-lighter);
+          
+          .name {
+            margin-left: 8px;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          
+          .position {
+            margin-left: 8px;
+            color: var(--el-text-color-secondary);
+            font-size: 12px;
+          }
         }
       }
     }
     
-    .content-layout {
-      display: flex;
-      gap: 16px;
-      margin-top: 16px;
-      
-      .tree-container {
-        flex: 1;
-        min-width: 0;
-      }
-      
-      .info-panel {
-        width: 300px;
+    .performance-info {
+      .info-item {
         display: flex;
-        flex-direction: column;
-        gap: 16px;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--el-border-color-lighter);
         
-        .selection-info, .performance-stats {
-          .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          }
-          
-          .selected-item {
-            display: flex;
-            align-items: center;
-            padding: 8px;
-            border-bottom: 1px solid var(--el-border-color-light);
-            
-            &:last-child {
-              border-bottom: none;
-            }
-            
-            .avatar {
-              margin-right: 8px;
-              background-color: var(--el-color-primary-light-7);
-            }
-            
-            .el-icon {
-              margin-right: 8px;
-              font-size: 18px;
-              color: var(--el-text-color-secondary);
-            }
-            
-            .node-name {
-              flex: 1;
-              white-space: nowrap;
-              overflow: hidden;
-              text-overflow: ellipsis;
-            }
-            
-            .node-position {
-              margin-left: 8px;
-              color: var(--el-text-color-secondary);
-              font-size: 12px;
-            }
-          }
-          
-          .stats-content {
-            .stat-item {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 8px;
-              
-              .label {
-                color: var(--el-text-color-secondary);
-              }
-              
-              .value {
-                font-weight: 500;
-              }
-            }
-            
-            .el-progress {
-              margin-top: 12px;
-            }
-          }
+        .label {
+          color: var(--el-text-color-secondary);
+        }
+        
+        .value {
+          font-weight: bold;
         }
       }
     }
   }
+}
+
+.ml-10 {
+  margin-left: 10px;
 }
 </style>

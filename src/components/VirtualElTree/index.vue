@@ -142,6 +142,10 @@ const props = defineProps({
   defaultExpandedKeys: {
     type: Array,
     default: () => []
+  },
+  checkStrictly: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -177,6 +181,9 @@ const totalTreeHeight = ref(0);
 const scrollTop = ref(0);
 const workerRef = ref(null);
 
+// 添加半选状态管理
+const indeterminateKeys = ref([]);
+
 // 数据处理 - 使用Vue3 computed避免重复计算
 const processedData = computed(() => {
   const processed = processTreeData(props.treeData || []);
@@ -192,10 +199,22 @@ const flattenedData = computed(() => processedData.value.flattenedData || []);
  */
 const nodeWithSelectionState = (node) => {
   if (!node) return null;
+  
+  const isSelected = selectedKeys.value.includes(node.id);
+  const isChecked = checkedKeys.value.includes(node.id);
+  const isIndeterminate = indeterminateKeys.value.includes(node.id);
+  
+  // 确保节点的选中状态和复选框状态保持一致
+  if (props.checkable && isSelected && !isChecked && !isIndeterminate) {
+    // 如果节点被选中但复选框未勾选，自动勾选复选框
+    checkedKeys.value.push(node.id);
+  }
+  
   return {
     ...node,
-    selected: selectedKeys.value.includes(node.id),
-    checked: checkedKeys.value.includes(node.id)
+    selected: isSelected,
+    checked: checkedKeys.value.includes(node.id), // 重新获取，因为可能刚刚更新
+    indeterminate: indeterminateKeys.value.includes(node.id)
   };
 };
 
@@ -217,22 +236,108 @@ function isNodeChecked(node) {
  * 处理节点点击选择
  */
 function handleSelect(nodeId) {
+  const node = nodeMapRef.value.get(nodeId);
+  if (!node) return;
+  
   if (props.multiple) {
     // 多选模式
     const index = selectedKeys.value.indexOf(nodeId);
     if (index > -1) {
       // 如果已选中，则移除
       selectedKeys.value.splice(index, 1);
+      
+      // 同步更新复选框状态（如果启用了复选框）
+      if (props.checkable) {
+        // 从checkedKeys中移除
+        const checkIndex = checkedKeys.value.indexOf(nodeId);
+        if (checkIndex > -1) {
+          checkedKeys.value.splice(checkIndex, 1);
+          
+          // 如果启用级联选择，处理父节点状态
+          if (props.checkStrictly !== true) {
+            // 递归更新所有父节点的状态
+            let currentParentId = node.parentId;
+            while (currentParentId) {
+              updateParentCheckState(currentParentId);
+              const parentNode = nodeMapRef.value.get(currentParentId);
+              if (!parentNode) break;
+              currentParentId = parentNode.parentId;
+            }
+          }
+        } else {
+          // 如果复选框未勾选但节点被选中，确保复选框状态也被取消
+          // 这是为了处理可能的状态不一致情况
+          const indeterminateIndex = indeterminateKeys.value.indexOf(nodeId);
+          if (indeterminateIndex > -1) {
+            indeterminateKeys.value.splice(indeterminateIndex, 1);
+          }
+        }
+      }
+      
       emit('select', [...selectedKeys.value], { selected: false, nodeIds: [nodeId] });
     } else {
       // 如果未选中，则添加
       selectedKeys.value.push(nodeId);
+      
+      // 同步更新复选框状态（如果启用了复选框）
+      if (props.checkable && !checkedKeys.value.includes(nodeId)) {
+        // 如果节点被选中，复选框也应该被勾选
+        checkedKeys.value.push(nodeId);
+        
+        // 如果启用级联选择，处理父节点状态
+        if (props.checkStrictly !== true) {
+          // 递归更新所有父节点的状态
+          let currentParentId = node.parentId;
+          while (currentParentId) {
+            updateParentCheckState(currentParentId);
+            const parentNode = nodeMapRef.value.get(currentParentId);
+            if (!parentNode) break;
+            currentParentId = parentNode.parentId;
+          }
+        }
+      }
+      
       emit('select', [...selectedKeys.value], { selected: true, nodeIds: [nodeId] });
     }
   } else {
     // 单选模式
+    const oldSelected = [...selectedKeys.value];
     selectedKeys.value = [nodeId];
-    emit('select', selectedKeys.value, { node: nodeMapRef.value.get(nodeId), selected: true });
+    
+    // 同步更新复选框状态（如果启用了复选框）
+    if (props.checkable) {
+      // 清除之前选中的复选框
+      if (oldSelected.length > 0) {
+        oldSelected.forEach(id => {
+          const index = checkedKeys.value.indexOf(id);
+          if (index > -1) {
+            checkedKeys.value.splice(index, 1);
+            
+            // 更新被取消选中节点的父节点状态
+            const oldNode = nodeMapRef.value.get(id);
+            if (oldNode && oldNode.parentId && props.checkStrictly !== true) {
+              updateParentCheckState(oldNode.parentId);
+            }
+          }
+        });
+      }
+      
+      // 选中当前节点的复选框
+      if (!checkedKeys.value.includes(nodeId)) {
+        checkedKeys.value.push(nodeId);
+        
+        // 更新新选中节点的父节点状态
+        if (node.parentId && props.checkStrictly !== true) {
+          updateParentCheckState(node.parentId);
+        }
+      }
+    }
+    
+    emit('select', selectedKeys.value, { 
+      node: node, 
+      selected: true,
+      oldSelected
+    });
   }
 }
 
@@ -277,18 +382,310 @@ function handleToggle(nodeId) {
  */
 function handleCheck(nodeId, checked) {
   if (props.checkable) {
-    const index = checkedKeys.value.indexOf(nodeId);
-    if (index > -1 && !checked) {
-      // 如果已选中且取消选中
-      checkedKeys.value.splice(index, 1);
-      emit('check', [...checkedKeys.value], { checked: false, nodeIds: [nodeId] });
-    } else if (index === -1 && checked) {
-      // 如果未选中且选中
+    // 获取节点及其所有子节点
+    const node = nodeMapRef.value.get(nodeId);
+    if (!node) return;
+    
+    // 所有受影响的节点ID
+    const affectedNodeIds = [];
+    
+    // 处理当前节点
+    const currentIndex = checkedKeys.value.indexOf(nodeId);
+    if (currentIndex > -1 && !checked) {
+      // 取消勾选
+      checkedKeys.value.splice(currentIndex, 1);
+      affectedNodeIds.push(nodeId);
+      
+      // 同步更新selectedKeys（如果节点在selectedKeys中）
+      const selectedIndex = selectedKeys.value.indexOf(nodeId);
+      if (selectedIndex > -1) {
+        selectedKeys.value.splice(selectedIndex, 1);
+      }
+      
+      // 移除半选状态（如果有）
+      const indeterminateIndex = indeterminateKeys.value.indexOf(nodeId);
+      if (indeterminateIndex > -1) {
+        indeterminateKeys.value.splice(indeterminateIndex, 1);
+      }
+    } else if (currentIndex === -1 && checked) {
+      // 勾选
       checkedKeys.value.push(nodeId);
-      emit('check', [...checkedKeys.value], { checked: true, nodeIds: [nodeId] });
+      affectedNodeIds.push(nodeId);
+      
+      // 同步更新selectedKeys（如果节点不在selectedKeys中）
+      if (!selectedKeys.value.includes(nodeId)) {
+        selectedKeys.value.push(nodeId);
+      }
+      
+      // 移除半选状态（如果有）
+      const indeterminateIndex = indeterminateKeys.value.indexOf(nodeId);
+      if (indeterminateIndex > -1) {
+        indeterminateKeys.value.splice(indeterminateIndex, 1);
+      }
     }
+    
+    // 如果启用级联选择，处理子节点
+    if (props.checkStrictly !== true) {
+      // 处理子节点（级联选择）
+      const childIds = getAllChildrenIds(nodeId);
+      childIds.forEach(childId => {
+        const childIndex = checkedKeys.value.indexOf(childId);
+        if (childIndex > -1 && !checked) {
+          checkedKeys.value.splice(childIndex, 1);
+          affectedNodeIds.push(childId);
+          
+          // 同步更新selectedKeys
+          const selectedIndex = selectedKeys.value.indexOf(childId);
+          if (selectedIndex > -1) {
+            selectedKeys.value.splice(selectedIndex, 1);
+          }
+          
+          // 移除半选状态（如果有）
+          const indeterminateIndex = indeterminateKeys.value.indexOf(childId);
+          if (indeterminateIndex > -1) {
+            indeterminateKeys.value.splice(indeterminateIndex, 1);
+          }
+        } else if (childIndex === -1 && checked) {
+          checkedKeys.value.push(childId);
+          affectedNodeIds.push(childId);
+          
+          // 同步更新selectedKeys
+          if (!selectedKeys.value.includes(childId)) {
+            selectedKeys.value.push(childId);
+          }
+          
+          // 移除半选状态（如果有）
+          const indeterminateIndex = indeterminateKeys.value.indexOf(childId);
+          if (indeterminateIndex > -1) {
+            indeterminateKeys.value.splice(indeterminateIndex, 1);
+          }
+        }
+      });
+      
+      // 递归处理所有父节点状态
+      let currentParentId = node.parentId;
+      while (currentParentId) {
+        updateParentCheckState(currentParentId);
+        const parentNode = nodeMapRef.value.get(currentParentId);
+        if (!parentNode) break;
+        currentParentId = parentNode.parentId;
+      }
+    }
+    
+    // 同步发送select事件，以便App.vue可以更新selectedUsers
+    if (affectedNodeIds.length > 0) {
+      emit('select', [...selectedKeys.value], { 
+        selected: checked, 
+        nodeIds: affectedNodeIds
+      });
+    }
+    
+    emit('check', [...checkedKeys.value], { 
+      checked, 
+      nodeIds: affectedNodeIds,
+      node: node
+    });
   }
 }
+
+/**
+ * 获取所有子节点ID
+ */
+function getAllChildrenIds(nodeId) {
+  const result = [];
+  const node = nodeMapRef.value.get(nodeId);
+  if (!node || !node.children || node.children.length === 0) return result;
+  
+  function traverse(children) {
+    if (!children || !children.length) return;
+    
+    for (const childId of children) {
+      const childNode = nodeMapRef.value.get(childId);
+      if (childNode) {
+        result.push(childId);
+        if (childNode.children && childNode.children.length > 0) {
+          traverse(childNode.children);
+        }
+      }
+    }
+  }
+  
+  traverse(node.children);
+  return result;
+}
+
+/**
+ * 更新父节点选中状态
+ */
+function updateParentCheckState(parentId) {
+  if (!parentId) return;
+  
+  const parent = nodeMapRef.value.get(parentId);
+  if (!parent || !parent.children || parent.children.length === 0) return;
+  
+  // 检查所有子节点状态
+  const allChildrenIds = parent.children;
+  const allChecked = allChildrenIds.every(childId => checkedKeys.value.includes(childId));
+  const someChecked = allChildrenIds.some(childId => checkedKeys.value.includes(childId) || indeterminateKeys.value.includes(childId));
+  
+  // 更新父节点状态
+  const parentIndex = checkedKeys.value.indexOf(parentId);
+  const indeterminateIndex = indeterminateKeys.value.indexOf(parentId);
+  
+  if (allChecked) {
+    // 所有子节点选中，父节点也应选中
+    if (parentIndex === -1) {
+      checkedKeys.value.push(parentId);
+    }
+    // 移除半选状态
+    if (indeterminateIndex > -1) {
+      indeterminateKeys.value.splice(indeterminateIndex, 1);
+    }
+    
+    // 同步更新selectedKeys
+    if (!selectedKeys.value.includes(parentId)) {
+      selectedKeys.value.push(parentId);
+    }
+  } else if (!someChecked) {
+    // 没有子节点选中，父节点也不应选中
+    if (parentIndex > -1) {
+      checkedKeys.value.splice(parentIndex, 1);
+    }
+    // 移除半选状态
+    if (indeterminateIndex > -1) {
+      indeterminateKeys.value.splice(indeterminateIndex, 1);
+    }
+    
+    // 同步更新selectedKeys
+    const selectedIndex = selectedKeys.value.indexOf(parentId);
+    if (selectedIndex > -1) {
+      selectedKeys.value.splice(selectedIndex, 1);
+    }
+  } else if (someChecked && !allChecked) {
+    // 部分子节点选中，父节点应为半选状态
+    // 确保父节点未被选中
+    if (parentIndex > -1) {
+      checkedKeys.value.splice(parentIndex, 1);
+    }
+    // 添加半选状态
+    if (indeterminateIndex === -1) {
+      indeterminateKeys.value.push(parentId);
+    }
+    
+    // 同步更新selectedKeys（半选状态下，父节点不应被选中）
+    const selectedIndex = selectedKeys.value.indexOf(parentId);
+    if (selectedIndex > -1) {
+      selectedKeys.value.splice(selectedIndex, 1);
+    }
+  }
+  
+  // 继续向上递归处理
+  if (parent.parentId) {
+    updateParentCheckState(parent.parentId);
+  }
+}
+
+/**
+ * 清除所有选中状态
+ */
+function clearSelection() {
+  selectedKeys.value = [];
+  emit('select', [], { selected: false, nodeIds: [] });
+}
+
+/**
+ * 清除所有复选框选中状态
+ */
+function clearChecked() {
+  // 保存一份当前选中的节点ID，用于发送事件
+  const oldCheckedKeys = [...checkedKeys.value];
+  
+  // 清空所有状态
+  checkedKeys.value = [];
+  indeterminateKeys.value = [];
+  
+  // 同步清除选中状态
+  selectedKeys.value = [];
+  
+  // 发送事件通知
+  if (oldCheckedKeys.length > 0) {
+    emit('check', [], { checked: false, nodeIds: oldCheckedKeys });
+    emit('select', [], { selected: false, nodeIds: oldCheckedKeys });
+  }
+}
+
+/**
+ * 设置选中的复选框
+ */
+function setCheckedKeys(keys, options = {}) {
+  if (!Array.isArray(keys)) return;
+  
+  // 清除现有状态
+  checkedKeys.value = [];
+  indeterminateKeys.value = [];
+  
+  // 设置新的选中状态
+  checkedKeys.value = [...keys];
+  
+  // 如果不是严格模式，更新父子节点状态
+  if (props.checkStrictly !== true && options.updateRelated !== false) {
+    // 处理所有选中节点的子节点
+    const childrenToProcess = [];
+    keys.forEach(key => {
+      const node = nodeMapRef.value.get(key);
+      if (node && node.children && node.children.length > 0) {
+        childrenToProcess.push(...getAllChildrenIds(key));
+      }
+    });
+    
+    // 添加所有子节点到选中状态
+    childrenToProcess.forEach(childId => {
+      if (!checkedKeys.value.includes(childId)) {
+        checkedKeys.value.push(childId);
+      }
+    });
+    
+    // 更新所有父节点状态
+    const processedParents = new Set();
+    keys.forEach(key => {
+      const node = nodeMapRef.value.get(key);
+      if (node && node.parentId && !processedParents.has(node.parentId)) {
+        updateParentCheckState(node.parentId);
+        processedParents.add(node.parentId);
+      }
+    });
+  }
+  
+  emit('check', checkedKeys.value, { checked: true, nodeIds: keys });
+}
+
+/**
+ * 暴露给父组件的方法
+ */
+defineExpose({
+  clearSelection,
+  clearChecked,
+  getSelectedKeys: () => selectedKeys.value,
+  getCheckedKeys: () => checkedKeys.value,
+  getIndeterminateKeys: () => indeterminateKeys.value,
+  setSelectedKeys: (keys) => {
+    selectedKeys.value = Array.isArray(keys) ? keys : [];
+  },
+  setCheckedKeys,
+  // 获取半选状态的节点
+  getHalfCheckedKeys: () => indeterminateKeys.value,
+  // 获取选中的节点数据
+  getCheckedNodes: () => {
+    return checkedKeys.value.map(id => nodeMapRef.value.get(id)).filter(Boolean);
+  },
+  // 获取选中的叶子节点
+  getCheckedLeafKeys: () => {
+    return checkedKeys.value.filter(id => {
+      const node = nodeMapRef.value.get(id);
+      return node && (!node.children || node.children.length === 0);
+    });
+  }
+});
 
 /**
  * 处理滚动事件

@@ -7,7 +7,8 @@
       'is-current': node.selected,
       'is-matched': node.matched,
       'is-user-node': isUser,
-      'is-checked': node.checked
+      'is-checked': node.checked,
+      'is-indeterminate': node.indeterminate
     }"
     :style="{ paddingLeft: `${node.level * 18}px` }"
     @click="handleNodeClick"
@@ -16,14 +17,14 @@
     <span
       class="el-tree-node__expand-icon"
       :class="{
-        'is-expanded': node.expanded && showExpander,
+        'expanded': node.expanded && showExpander,
         'is-leaf': !showExpander
       }"
       @click.stop="handleExpanderClick"
     >
       <el-icon v-if="loading"><Loading /></el-icon>
       <el-icon v-else-if="showExpander">
-        <CaretRight :class="{ 'is-expanded': node.expanded }" />
+        <CaretRight :class="{ 'expanded': node.expanded }" />
       </el-icon>
     </span>
 
@@ -31,6 +32,7 @@
     <el-checkbox
       v-if="checkable"
       :model-value="node.checked"
+      :indeterminate="node.indeterminate"
       @update:model-value="handleCheckboxClick"
       @click.stop
     />
@@ -47,13 +49,17 @@
       </span>
 
       <!-- 文本 -->
-      <span v-if="node.matched" class="el-tree-node__label-text matched">{{ node.name || node.label }}</span>
-      <span v-else class="el-tree-node__label-text">{{ node.name || node.label }}</span>
-
-      <!-- 人员节点附加信息 -->
-      <span v-if="isUser && node.position" class="el-tree-node__extra">
-        {{ node.position }}
-      </span>
+      <span v-if="node.matched" class="el-tree-node__label-text matched">{{ node.name }}</span>
+      <span v-else class="el-tree-node__label-text">{{ node.name }}</span>
+      
+      <!-- 职位信息 (仅用户节点) -->
+      <span v-if="isUser && node.position" class="el-tree-node__position">{{ node.position }}</span>
+    </span>
+    
+    <!-- 右侧附加信息 -->
+    <span v-if="isUser && showExtraInfo" class="el-tree-node__extra">
+      <span v-if="node.email" class="el-tree-node__email" :title="node.email">{{ node.email }}</span>
+      <span v-if="node.phone" class="el-tree-node__phone">{{ node.phone }}</span>
     </span>
   </div>
 </template>
@@ -68,6 +74,7 @@ import {
   FolderOpened,
   User
 } from '@element-plus/icons-vue';
+import { ElIcon, ElCheckbox, ElAvatar } from 'element-plus';
 
 /**
  * 树节点组件 - 支持部门和人员节点的渲染
@@ -80,6 +87,10 @@ const props = defineProps({
     required: true
   },
   checkable: {
+    type: Boolean,
+    default: false
+  },
+  showExtraInfo: {
     type: Boolean,
     default: false
   }
@@ -111,6 +122,9 @@ function handleExpanderClick(e) {
  */
 function handleNodeClick() {
   emit('select', props.node.id);
+  
+  // 注意：我们在VirtualElTree/index.vue中已经处理了选中节点时自动更新复选框状态
+  // 这里不再重复触发复选框状态变化，以避免循环调用
 }
 
 /**
@@ -124,92 +138,90 @@ function handleCheckboxClick(checked) {
 
 <style lang="scss" scoped>
 .el-tree-node {
-  padding: 0;
   display: flex;
   align-items: center;
   height: 100%;
   cursor: pointer;
-
+  position: relative;
+  white-space: nowrap;
+  
   &:hover {
     background-color: var(--el-bg-color-hover);
   }
-
+  
   &.is-current {
     background-color: var(--el-color-primary-light-9);
     color: var(--el-color-primary);
   }
-
+  
   &.is-checked {
-    font-weight: bold;
+    background-color: var(--el-color-primary-light-8);
   }
-
+  
   &.is-matched {
     .el-tree-node__label-text {
       color: var(--el-color-danger);
       font-weight: bold;
     }
   }
-
-  &.is-user-node {
-    .el-tree-node__icon {
-      .el-icon {
-        color: var(--el-color-info);
-      }
-    }
-
-    .el-tree-node__extra {
-      margin-left: 8px;
-      color: var(--el-color-info);
-      font-size: 12px;
-    }
-  }
-
+  
   .el-tree-node__expand-icon {
     padding: 6px;
     cursor: pointer;
-    transform: rotate(0deg);
-    transition: transform .3s ease-in-out;
-
-    &.is-expanded {
+    
+    &.expanded {
       transform: rotate(90deg);
     }
-
+    
     &.is-leaf {
-      visibility: hidden;
+      opacity: 0;
       cursor: default;
     }
-
-    .el-icon {
-      font-size: 14px;
-      vertical-align: middle;
-    }
   }
-
+  
   .el-tree-node__label {
+    flex: 1;
     display: flex;
     align-items: center;
-    flex: 1;
-    height: 100%;
     padding: 0 5px;
     overflow: hidden;
-
+    
     .el-tree-node__icon {
       margin-right: 8px;
       font-size: 16px;
       display: inline-flex;
       align-items: center;
-
-      .el-avatar {
-        vertical-align: middle;
-        margin-right: 5px;
-        background-color: var(--el-color-primary-light-7);
-      }
     }
-
+    
     .el-tree-node__label-text {
-      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    
+    .el-tree-node__position {
+      margin-left: 8px;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
+    }
+  }
+  
+  .el-tree-node__extra {
+    margin-left: 8px;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+  }
+  
+  &.is-user-node {
+    .el-tree-node__icon {
+      .el-avatar {
+        margin-right: 5px;
+      }
     }
   }
 }
