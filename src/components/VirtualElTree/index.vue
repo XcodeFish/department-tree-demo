@@ -17,6 +17,7 @@
 
     <div v-else-if="loading" class="virtual-el-tree-loading">
       <el-icon class="is-loading"><Loading /></el-icon>
+      <span>加载中...</span>
     </div>
 
     <div
@@ -49,20 +50,14 @@
         >
           <slot
             v-if="$slots.default"
-            :node="node"
+            :node="nodeWithSelectionState(node)"
             :on-toggle="handleToggle"
             :on-select="handleSelect"
             :on-check="handleCheck"
-            :selected="isNodeSelected(node)"
-            :checked="isNodeChecked(node)"
           />
           <virtual-tree-node
             v-else
-            :node="{
-              ...node,
-              selected: isNodeSelected(node),
-              checked: isNodeChecked(node)
-            }"
+            :node="nodeWithSelectionState(node)"
             :checkable="checkable"
             @toggle="handleToggle"
             @select="handleSelect"
@@ -73,7 +68,8 @@
     </div>
 
     <div v-if="searchLoading" class="virtual-el-tree-search-indicator">
-      <el-icon class="is-loading"><Loading /></el-icon> 搜索中...
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <span>搜索中...</span>
     </div>
 
     <div v-if="multiple && selectedKeys.length > 0" class="virtual-el-tree-selected-count">
@@ -87,101 +83,62 @@ import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } fr
 import { Search, Loading } from '@element-plus/icons-vue';
 import { ElInput, ElEmpty, ElIcon } from 'element-plus';
 import VirtualTreeNode from './VirtualTreeNode.vue';
-import { processTreeData, isNodeVisible as checkNodeVisible, calculateVisibleNodes as calcVisibleNodes } from './utils/treeUtils';
+import { processTreeData, isNodeVisible, calculateVisibleNodes } from '../../utils/treeUtils';
 import { useWorker } from './composables/useWorker';
 import { useTreeState } from './composables/useTreeState';
 
 /**
- * 组件属性定义
+ * 虚拟滚动树组件Props
  */
 const props = defineProps({
-  /**
-   * 树数据
-   */
   treeData: {
     type: Array,
     default: () => []
   },
-  /**
-   * 容器高度
-   */
   height: {
     type: Number,
     default: 600
   },
-  /**
-   * 节点高度
-   */
   nodeHeight: {
     type: Number,
     default: 40
   },
-  /**
-   * 加载状态
-   */
   loading: {
     type: Boolean,
     default: false
   },
-  /**
-   * 是否显示搜索框
-   */
   showSearch: {
     type: Boolean,
     default: true
   },
-  /**
-   * 搜索框提示文字
-   */
   searchPlaceholder: {
     type: String,
     default: '搜索部门/人员'
   },
-  /**
-   * 空状态文本
-   */
   emptyText: {
     type: String,
     default: '暂无数据'
   },
-  /**
-   * 性能模式（使用WebWorker）
-   */
   performanceMode: {
     type: Boolean,
     default: true
   },
-  /**
-   * 支持多选
-   */
   multiple: {
     type: Boolean,
     default: false
   },
-  /**
-   * 显示复选框
-   */
   checkable: {
     type: Boolean,
     default: false
   },
-  /**
-   * 默认选中的节点键值
-   */
   defaultSelectedKeys: {
     type: Array,
     default: () => []
   },
-  /**
-   * 默认勾选的节点键值
-   */
   defaultCheckedKeys: {
     type: Array,
     default: () => []
   },
-  /**
-   * 默认展开的节点键值
-   */
   defaultExpandedKeys: {
     type: Array,
     default: () => []
@@ -231,6 +188,18 @@ const processedData = computed(() => {
 const flattenedData = computed(() => processedData.value.flattenedData || []);
 
 /**
+ * 添加选中状态到节点数据
+ */
+const nodeWithSelectionState = (node) => {
+  if (!node) return null;
+  return {
+    ...node,
+    selected: selectedKeys.value.includes(node.id),
+    checked: checkedKeys.value.includes(node.id)
+  };
+};
+
+/**
  * 判断节点是否被选中
  */
 function isNodeSelected(node) {
@@ -271,34 +240,35 @@ function handleSelect(nodeId) {
  * 处理节点展开/折叠
  */
 function handleToggle(nodeId) {
-  const node = nodeMapRef.value.get(nodeId);
-  if (!node) return;
-
-  // 更新节点展开状态
-  node.expanded = !node.expanded;
-
-  // 更新展开键数组
-  const index = expandedKeys.value.indexOf(nodeId);
-  if (node.expanded && index === -1) {
-    expandedKeys.value.push(nodeId);
-  } else if (!node.expanded && index > -1) {
-    expandedKeys.value.splice(index, 1);
-  }
-
-  // 发送事件
-  emit('expand', nodeId, node.expanded);
-
   if (props.performanceMode && workerRef.value) {
+    const node = nodeMapRef.value.get(nodeId);
+    if (!node) return;
+
+    // 更新本地节点状态
+    node.expanded = !node.expanded;
+
     workerRef.value.postMessage({
       type: 'toggleNode',
-      nodeId
+      nodeId,
+      expanded: node.expanded
     });
   } else {
-    // 清除可见性缓存
-    visibilityCache.value.clear();
-    
-    // 重新计算可见节点
-    updateVisibleNodes(scrollTop.value);
+    // 主线程处理展开/折叠
+    const node = nodeMapRef.value.get(nodeId);
+    if (!node) return;
+
+    node.expanded = !node.expanded;
+    visibleNodes.value = calculateVisibleNodes(scrollTop.value, props.height);
+
+    // 重新计算树高度
+    let visibleCount = 0;
+    flattenedData.value.forEach(node => {
+      if (isNodeVisible(node, nodeMapRef.value, visibilityCache.value)) {
+        visibleCount++;
+      }
+    });
+    totalTreeHeight.value = visibleCount * props.nodeHeight;
+    emit('expand', nodeId, node.expanded);
   }
 }
 
@@ -346,27 +316,62 @@ function updateVisibleNodes(scrollPosition) {
       buffer
     });
   } else {
-    // 获取扁平化数据
-    const flattenedData = [];
-    for (const node of nodeMapRef.value.values()) {
-      flattenedData.push(node);
-    }
-
-    // 计算可见节点
-    const result = calcVisibleNodes(
-      flattenedData,
-      nodeMapRef.value,
-      visibilityCache.value,
-      scrollPosition,
-      props.height,
-      props.nodeHeight,
-      Math.ceil(props.height / props.nodeHeight) * 2
-    );
-
-    visibleNodes.value = result.visibleNodes;
-    totalTreeHeight.value = result.totalHeight;
-    emit('visible-nodes-change', result.visibleNodes.length);
+    // 主线程计算可见节点
+    visibleNodes.value = calculateVisibleNodesInMainThread(scrollPosition, props.height);
   }
+}
+
+/**
+ * 非Worker模式下的可见节点计算
+ */
+function calculateVisibleNodesInMainThread(scrollPos, viewHeight) {
+  if (!flattenedData.value || flattenedData.value.length === 0) {
+    return [];
+  }
+
+  const buffer = Math.ceil(viewHeight / props.nodeHeight) * 2;
+  const startIndex = Math.max(0, Math.floor(scrollPos / props.nodeHeight) - buffer);
+  const visibleCount = Math.ceil(viewHeight / props.nodeHeight) + buffer * 2;
+
+  const result = [];
+  let currentTop = 0;
+  let currentIndex = 0;
+
+  for (let i = 0; i < flattenedData.value.length; i++) {
+    const node = flattenedData.value[i];
+    if (!node) continue;
+    
+    if (isNodeVisible(node, nodeMapRef.value, visibilityCache.value)) {
+      if (currentIndex >= startIndex && currentIndex < startIndex + visibleCount) {
+        result.push({
+          ...node,
+          offsetTop: currentTop,
+          index: currentIndex
+        });
+      }
+      currentTop += props.nodeHeight;
+      currentIndex++;
+    }
+  }
+
+  emit('visible-nodes-change', result.length);
+  return result;
+}
+
+/**
+ * 回退到主线程计算模式
+ */
+function fallbackToMainThread() {
+  // 计算初始树高度
+  let visibleCount = 0;
+  flattenedData.value.forEach(node => {
+    if (isNodeVisible(node, nodeMapRef.value, visibilityCache.value)) {
+      visibleCount++;
+    }
+  });
+  
+  totalTreeHeight.value = visibleCount * props.nodeHeight;
+  visibleNodes.value = calculateVisibleNodesInMainThread(scrollTop.value, props.height);
 }
 
 /**
@@ -428,20 +433,26 @@ function handleSearch(term) {
 }
 
 /**
- * 初始化Web Worker
+ * 初始化Worker或回退到主线程计算
  */
 function initializeWorker() {
+  // 确保flattenedData有值
+  if (!flattenedData.value || !Array.isArray(flattenedData.value) || flattenedData.value.length === 0) {
+    totalTreeHeight.value = 0;
+    visibleNodes.value = [];
+    return;
+  }
+
   if (window.Worker && props.performanceMode) {
     // 清理旧Worker
     if (workerRef.value) {
       workerRef.value.terminate();
+      workerRef.value = null;
     }
 
     try {
-      // 创建Worker实例
-      workerRef.value = new Worker('/src/workers/treeWorker.js');
+      workerRef.value = new Worker('/workers/treeWorker.js');
 
-      // 注册消息处理函数
       workerRef.value.onmessage = (e) => {
         const { type, ...data } = e.data;
 
@@ -452,9 +463,11 @@ function initializeWorker() {
             break;
 
           case 'visibleNodesUpdated':
-            visibleNodes.value = data.visibleNodes;
-            totalTreeHeight.value = data.totalHeight;
-            emit('visible-nodes-change', data.visibleNodes.length);
+            if (Array.isArray(data.visibleNodes)) {
+              visibleNodes.value = data.visibleNodes;
+              totalTreeHeight.value = data.totalHeight;
+              emit('visible-nodes-change', data.visibleNodes.length);
+            }
             break;
 
           case 'nodeToggled':
@@ -466,30 +479,41 @@ function initializeWorker() {
           case 'searchComplete':
             searchLoading.value = false;
             updateVisibleNodes(scrollTop.value);
+            emit('search', data.matchCount, data.matches);
             break;
         }
+      };
+
+      workerRef.value.onerror = (error) => {
+        console.error('Web Worker错误:', error);
+        fallbackToMainThread();
       };
 
       // 发送初始化数据给Worker
       workerRef.value.postMessage({
         type: 'initialize',
-        flattenedData: flattenedData.value
+        flattenedData: flattenedData.value,
+        nodeHeight: props.nodeHeight
       });
-    } catch (err) {
-      console.error('Failed to initialize tree worker:', err);
-      // 回退到主线程处理
-      updateVisibleNodes(scrollTop.value);
+    } catch (error) {
+      console.error('Worker初始化失败，回退到主线程计算', error);
+      // 回退到主线程计算
+      fallbackToMainThread();
     }
   } else {
-    // 回退到主线程计算
-    updateVisibleNodes(scrollTop.value);
+    fallbackToMainThread();
   }
 }
 
-// 监听数据变化，重新初始化树
-watch(() => props.treeData, () => {
-  if (props.treeData.length) {
+// Worker初始化和管理
+watch(() => props.treeData, async () => {
+  if (props.treeData && Array.isArray(props.treeData) && props.treeData.length > 0) {
+    await nextTick();
     initializeWorker();
+  } else {
+    // 如果没有数据，设置为空数组
+    visibleNodes.value = [];
+    totalTreeHeight.value = 0;
   }
 }, { immediate: true });
 

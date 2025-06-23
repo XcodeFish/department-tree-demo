@@ -8,37 +8,57 @@
  * @returns {Object} 包含扁平化数据结构、节点Map索引和缓存信息
  */
 export function processTreeData(treeData) {
+  // 如果treeData为空，返回空结果
+  if (!treeData || !Array.isArray(treeData) || treeData.length === 0) {
+    return {
+      flattenedData: [],
+      nodeMap: new Map(),
+      visibilityCache: new Map(),
+      expandedCount: 0
+    };
+  }
+  
   const flattenedData = [];
   const nodeMap = new Map();
   const visibilityCache = new Map();
   let expandedCount = 0;
 
-  // 递归扁平化树结构
+  /**
+   * 递归扁平化树结构
+   * @param {Array} nodes 节点数组
+   * @param {Number} level 当前层级
+   * @param {String|null} parentId 父节点ID
+   * @param {Array} parentPath 父节点路径
+   */
   function flatten(nodes, level = 0, parentId = null, parentPath = []) {
-    if (!nodes || !nodes.length) return;
+    if (!nodes || !Array.isArray(nodes)) return;
     
     nodes.forEach(node => {
-      const currentPath = [...parentPath, node.id];
+      // 检查节点是否有效
+      if (!node || typeof node !== 'object') return;
+      
+      // 确保节点有id
+      const nodeId = node.id || `node_${Math.random().toString(36).substr(2, 9)}`;
+      const currentPath = [...parentPath, nodeId];
       const pathKey = currentPath.join('/');
 
+      // 创建扁平化节点
       const flatNode = {
-        id: node.id,
-        name: node.name || node.label, // 兼容Element Plus的label字段
-        label: node.label || node.name, // 兼容Element Plus的label字段
+        id: nodeId,
+        name: node.name || node.label || '未命名节点', // 兼容Element Plus的label字段
+        label: node.label || node.name || '未命名节点', // 兼容Element Plus的label字段
         parentId,
         level,
-        expanded: level === 0, // 默认展开第一级
-        children: node.children?.map(child => child.id || child.key) || [],
-        isLeaf: !node.children || node.children.length === 0,
+        expanded: level <= 1, // 默认展开前两级
+        children: node.children?.filter(Boolean).map(child => child.id || child.key || `child_${Math.random().toString(36).substr(2, 9)}`) || [],
+        isLeaf: !node.children || !Array.isArray(node.children) || node.children.length === 0,
         pathKey,
         loaded: true,
         // 扩展支持人员节点
         type: node.type || 'department', // 'department' 或 'user'
         avatar: node.avatar,             // 用户头像
         email: node.email,               // 用户邮箱
-        phone: node.phone,               // 用户电话
-        position: node.position,         // 用户职位
-        departmentName: node.departmentName // 用户所属部门名称
+        position: node.position          // 用户职位
       };
 
       // 计算初始展开的节点数量
@@ -46,11 +66,13 @@ export function processTreeData(treeData) {
         expandedCount++;
       }
 
+      // 添加到扁平数组和Map索引
       flattenedData.push(flatNode);
       nodeMap.set(flatNode.id, flatNode);
 
-      if (node.children?.length) {
-        flatten(node.children, level + 1, node.id, currentPath);
+      // 递归处理子节点
+      if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+        flatten(node.children.filter(Boolean), level + 1, nodeId, currentPath);
       }
     });
   }
@@ -62,6 +84,118 @@ export function processTreeData(treeData) {
     nodeMap,
     visibilityCache,
     expandedCount
+  };
+}
+
+/**
+ * 判断节点是否可见（考虑父节点展开状态）
+ * @param {Object} node 节点数据
+ * @param {Map} nodeMap 节点Map索引
+ * @param {Map} cache 可见性缓存
+ * @returns {Boolean} 是否可见
+ */
+export function isNodeVisible(node, nodeMap, cache) {
+  if (cache.has(node.id)) {
+    return cache.get(node.id);
+  }
+
+  // 根节点总是可见
+  if (!node.parentId) {
+    cache.set(node.id, true);
+    return true;
+  }
+
+  // 递归检查父节点展开状态
+  let currentNode = node;
+  let isVisible = true;
+
+  while (currentNode.parentId) {
+    const parent = nodeMap.get(currentNode.parentId);
+    if (!parent || !parent.expanded) {
+      isVisible = false;
+      break;
+    }
+    currentNode = parent;
+  }
+
+  cache.set(node.id, isVisible);
+  return isVisible;
+}
+
+/**
+ * 计算节点在展开/折叠状态下的高度
+ * @param {Array} flattenedData 扁平化的节点数据
+ * @param {Map} nodeMap 节点Map索引
+ * @param {Number} nodeHeight 单个节点高度
+ * @returns {Number} 总高度
+ */
+export function calculateTotalHeight(flattenedData, nodeMap, nodeHeight) {
+  const visibilityCache = new Map();
+  let visibleCount = 0;
+
+  for (let i = 0; i < flattenedData.length; i++) {
+    const node = flattenedData[i];
+    if (isNodeVisible(node, nodeMap, visibilityCache)) {
+      visibleCount++;
+    }
+  }
+
+  return visibleCount * nodeHeight;
+}
+
+/**
+ * 计算可见节点列表
+ * @param {Array} flattenedData 扁平化的节点数据
+ * @param {Map} nodeMap 节点Map索引
+ * @param {Map} visibilityCache 可见性缓存
+ * @param {Number} scrollTop 滚动位置
+ * @param {Number} viewportHeight 视口高度
+ * @param {Number} nodeHeight 节点高度
+ * @param {Number} buffer 上下缓冲区节点数量
+ * @returns {Object} 可见节点和相关信息
+ */
+export function calculateVisibleNodes(
+  flattenedData,
+  nodeMap,
+  visibilityCache,
+  scrollTop,
+  viewportHeight,
+  nodeHeight, 
+  buffer
+) {
+  const visibleNodes = [];
+  let accumulatedHeight = 0;
+  let currentIndex = 0;
+
+  // 计算起始和结束索引
+  const startIndex = Math.max(0, Math.floor(scrollTop / nodeHeight) - buffer);
+  const visibleCount = Math.ceil(viewportHeight / nodeHeight) + buffer * 2;
+  const endIndex = startIndex + visibleCount;
+
+  // 遍历所有节点，计算可见性和位置
+  for (let i = 0; i < flattenedData.length; i++) {
+    const node = flattenedData[i];
+    if (isNodeVisible(node, nodeMap, visibilityCache)) {
+      const offsetTop = accumulatedHeight;
+
+      // 检查节点是否在可视区域内（包括缓冲区）
+      if (currentIndex >= startIndex && currentIndex < endIndex) {
+        visibleNodes.push({
+          ...node,
+          offsetTop,
+          index: currentIndex
+        });
+      }
+
+      accumulatedHeight += nodeHeight;
+      currentIndex++;
+    }
+  }
+
+  return {
+    visibleNodes,
+    totalHeight: accumulatedHeight,
+    visibleCount: currentIndex
   };
 }
 

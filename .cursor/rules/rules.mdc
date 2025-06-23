@@ -5,6 +5,9 @@ alwaysApply: true
 ---
 # 部门树组件开发规则 (Development Rules)
 
+## 基本规范
+不重复创建函数、文件
+
 ## 1. 技术栈约束
 - 必须基于Vue3 Composition API构建组件
 - 必须使用Element Plus组件库并保持其设计风格

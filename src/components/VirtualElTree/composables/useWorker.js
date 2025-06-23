@@ -41,7 +41,7 @@ export function useWorker(options) {
 
     try {
       // 创建Worker实例
-      workerRef.value = new Worker('/src/workers/treeWorker.js');
+      workerRef.value = new Worker('/workers/treeWorker.js');
 
       // 注册消息处理函数
       workerRef.value.onmessage = (e) => {
@@ -75,10 +75,11 @@ export function useWorker(options) {
       // 发送初始化数据给Worker
       workerRef.value.postMessage({
         type: 'initialize',
-        flattenedData: flattenedData.value
+        flattenedData: flattenedData.value,
+        nodeHeight: nodeHeight
       });
     } catch (err) {
-      console.error('Failed to initialize tree worker:', err);
+      console.error('Worker初始化失败:', err);
     }
   }
 

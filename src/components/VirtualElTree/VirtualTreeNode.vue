@@ -6,7 +6,8 @@
       'is-expanded': node.expanded,
       'is-current': node.selected,
       'is-matched': node.matched,
-      'is-user-node': isUser
+      'is-user-node': isUser,
+      'is-checked': node.checked
     }"
     :style="{ paddingLeft: `${node.level * 18}px` }"
     @click="handleNodeClick"
@@ -15,7 +16,7 @@
     <span
       class="el-tree-node__expand-icon"
       :class="{
-        'expanded': node.expanded && showExpander,
+        'is-expanded': node.expanded && showExpander,
         'is-leaf': !showExpander
       }"
       @click.stop="handleExpanderClick"
@@ -41,16 +42,18 @@
         <el-avatar v-if="isUser && node.avatar" :size="24" :src="node.avatar" />
         <el-icon v-else-if="isUser"><User /></el-icon>
         <el-icon v-else-if="node.isLeaf"><Document /></el-icon>
-        <el-icon v-else-if="node.expanded"><Folder /></el-icon>
-        <el-icon v-else><FolderOpened /></el-icon>
+        <el-icon v-else-if="node.expanded"><FolderOpened /></el-icon>
+        <el-icon v-else><Folder /></el-icon>
       </span>
 
       <!-- 文本 -->
-      <span v-if="node.matched" class="el-tree-node__label-text matched">{{ node.name }}</span>
-      <span v-else class="el-tree-node__label-text">{{ node.name }}</span>
+      <span v-if="node.matched" class="el-tree-node__label-text matched">{{ node.name || node.label }}</span>
+      <span v-else class="el-tree-node__label-text">{{ node.name || node.label }}</span>
 
-      <!-- 用户附加信息 -->
-      <span v-if="isUser && node.position" class="el-tree-node__extra-info">{{ node.position }}</span>
+      <!-- 人员节点附加信息 -->
+      <span v-if="isUser && node.position" class="el-tree-node__extra">
+        {{ node.position }}
+      </span>
     </span>
   </div>
 </template>
@@ -65,52 +68,34 @@ import {
   FolderOpened,
   User
 } from '@element-plus/icons-vue';
-import { ElIcon, ElCheckbox, ElAvatar } from 'element-plus';
 
 /**
- * 树节点组件props定义
+ * 树节点组件 - 支持部门和人员节点的渲染
+ * @property {Object} node - 节点数据
+ * @property {Boolean} checkable - 是否显示复选框
  */
 const props = defineProps({
-  /**
-   * 节点数据
-   */
   node: {
     type: Object,
     required: true
   },
-  /**
-   * 是否可选中
-   */
   checkable: {
-    type: Boolean,
-    default: false
-  },
-  /**
-   * 是否处于加载状态
-   */
-  loading: {
     type: Boolean,
     default: false
   }
 });
 
-/**
- * 定义事件
- */
 const emit = defineEmits(['toggle', 'select', 'check']);
 
-/**
- * 判断是否为用户节点
- */
+// 计算属性
 const isUser = computed(() => props.node.type === 'user');
-
-/**
- * 是否显示展开图标
- */
-const showExpander = computed(() => {
-  if (isUser.value) return false;
-  return Array.isArray(props.node.children) && props.node.children.length > 0;
-});
+const loading = computed(() => props.node.loading);
+const hasChildren = computed(() =>
+  Array.isArray(props.node.children) && props.node.children.length > 0
+);
+const showExpander = computed(() =>
+  !isUser.value && (hasChildren.value || loading.value || (!props.node.isLeaf && !loading.value))
+);
 
 /**
  * 处理展开/折叠图标点击
@@ -122,7 +107,7 @@ function handleExpanderClick(e) {
 }
 
 /**
- * 处理节点点击
+ * 处理节点点击选择
  */
 function handleNodeClick() {
   emit('select', props.node.id);
@@ -130,6 +115,7 @@ function handleNodeClick() {
 
 /**
  * 处理复选框点击
+ * @param {Boolean} checked - 选中状态
  */
 function handleCheckboxClick(checked) {
   emit('check', props.node.id, checked);
@@ -138,76 +124,92 @@ function handleCheckboxClick(checked) {
 
 <style lang="scss" scoped>
 .el-tree-node {
+  padding: 0;
   display: flex;
   align-items: center;
-  padding: 0 3px;
   height: 100%;
   cursor: pointer;
-  white-space: nowrap;
-  outline: none;
-  
+
   &:hover {
-    background-color: var(--el-fill-color-light);
+    background-color: var(--el-bg-color-hover);
   }
-  
+
   &.is-current {
     background-color: var(--el-color-primary-light-9);
     color: var(--el-color-primary);
   }
 
+  &.is-checked {
+    font-weight: bold;
+  }
+
   &.is-matched {
-    .matched {
+    .el-tree-node__label-text {
       color: var(--el-color-danger);
       font-weight: bold;
     }
   }
 
   &.is-user-node {
-    padding-right: 8px;
+    .el-tree-node__icon {
+      .el-icon {
+        color: var(--el-color-info);
+      }
+    }
+
+    .el-tree-node__extra {
+      margin-left: 8px;
+      color: var(--el-color-info);
+      font-size: 12px;
+    }
   }
-  
+
   .el-tree-node__expand-icon {
     padding: 6px;
     cursor: pointer;
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
     transform: rotate(0deg);
-    transition: transform 0.3s ease-in-out;
-    
-    &.expanded {
+    transition: transform .3s ease-in-out;
+
+    &.is-expanded {
       transform: rotate(90deg);
     }
-    
+
     &.is-leaf {
       visibility: hidden;
       cursor: default;
     }
 
-    .is-expanded {
-      transform: rotate(90deg);
+    .el-icon {
+      font-size: 14px;
+      vertical-align: middle;
     }
   }
-  
+
   .el-tree-node__label {
-    flex: 1;
     display: flex;
     align-items: center;
-    
+    flex: 1;
+    height: 100%;
+    padding: 0 5px;
+    overflow: hidden;
+
     .el-tree-node__icon {
       margin-right: 8px;
-      color: var(--el-text-color-secondary);
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+
+      .el-avatar {
+        vertical-align: middle;
+        margin-right: 5px;
+        background-color: var(--el-color-primary-light-7);
+      }
     }
-    
+
     .el-tree-node__label-text {
+      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    
-    .el-tree-node__extra-info {
-      margin-left: 8px;
-      font-size: 12px;
-      color: var(--el-text-color-secondary);
     }
   }
 }
