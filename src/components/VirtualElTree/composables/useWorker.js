@@ -104,12 +104,14 @@ export function useWorker(options) {
   /**
    * 处理节点展开/折叠
    * @param {String} nodeId 节点ID
+   * @param {Boolean} expanded 是否展开
    */
-  function handleToggle(nodeId) {
+  function handleToggle(nodeId, expanded) {
     if (performanceMode && workerRef.value) {
       workerRef.value.postMessage({
         type: 'toggleNode',
-        nodeId
+        nodeId,
+        expanded
       });
     }
   }
