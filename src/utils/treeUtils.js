@@ -284,10 +284,11 @@ function generateEmail(name, companyDomain = null) {
  * @param {number} depth - 树的深度
  * @param {number} childrenPerNode - 每个节点的子节点数量
  * @param {number} userCount - 每个末级部门的用户数量
- * @returns {Array} 树数据
+ * @returns {Object} 包含树数据和节点总数的对象 { data: Array, count: Number }
  */
 export function generateTestTreeData(depth = 3, childrenPerNode = 4, userCount = 2) {
   const companyDomain = EMAIL_DOMAINS[Math.floor(Math.random() * EMAIL_DOMAINS.length)];
+  let totalCount = 0; // 用于统计总节点数
   
   // 生成部门树
   function generateDepartment(currentDepth, index = 0, parentPath = '', parentName = '') {
@@ -313,6 +314,9 @@ export function generateTestTreeData(depth = 3, childrenPerNode = 4, userCount =
       children: []
     };
     
+    // 增加节点计数
+    totalCount++;
+    
     // 生成子部门
     if (currentDepth < depth) {
       department.children = Array(childrenPerNode)
@@ -325,6 +329,9 @@ export function generateTestTreeData(depth = 3, childrenPerNode = 4, userCount =
         .map(() => {
           const name = generateChineseName();
           const position = POSITIONS[Math.floor(Math.random() * POSITIONS.length)];
+          
+          // 增加用户节点计数
+          totalCount++;
           
           return {
             id: generateUUID(),
@@ -342,7 +349,12 @@ export function generateTestTreeData(depth = 3, childrenPerNode = 4, userCount =
   }
   
   // 生成顶层部门
-  return Array(Math.min(childrenPerNode, DEPARTMENT_TYPES.length))
+  const treeData = Array(Math.min(childrenPerNode, DEPARTMENT_TYPES.length))
     .fill(null)
     .map((_, i) => generateDepartment(1, i));
+    
+  return {
+    data: treeData,
+    count: totalCount
+  };
 } 
