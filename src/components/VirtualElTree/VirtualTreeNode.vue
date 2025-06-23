@@ -22,7 +22,7 @@
     >
       <el-icon v-if="loading"><Loading /></el-icon>
       <el-icon v-else-if="showExpander">
-        <CaretRight :class="{ 'expanded': node.expanded }" />
+        <CaretRight :class="{ 'is-expanded': node.expanded }" />
       </el-icon>
     </span>
 
@@ -36,54 +36,21 @@
 
     <!-- 节点内容 -->
     <span class="el-tree-node__label">
-      <!-- 图标/头像 -->
+      <!-- 图标 -->
       <span class="el-tree-node__icon">
-        <el-avatar 
-          v-if="isUser"
-          :size="24"
-          :src="node.avatar"
-          :class="{'default-avatar': !node.avatar}"
-        >
-          {{ node.name.charAt(0) }}
-        </el-avatar>
+        <el-avatar v-if="isUser && node.avatar" :size="24" :src="node.avatar" />
+        <el-icon v-else-if="isUser"><User /></el-icon>
         <el-icon v-else-if="node.isLeaf"><Document /></el-icon>
         <el-icon v-else-if="node.expanded"><Folder /></el-icon>
         <el-icon v-else><FolderOpened /></el-icon>
       </span>
 
-      <!-- 主要信息 -->
-      <span class="el-tree-node__content">
-        <!-- 文本 -->
-        <span 
-          v-if="node.matched" 
-          class="el-tree-node__label-text matched"
-        >
-          {{ node.name }}
-        </span>
-        <span v-else class="el-tree-node__label-text">{{ node.name }}</span>
-        
-        <!-- 用户附加信息 -->
-        <template v-if="isUser">
-          <span class="el-tree-node__user-info">
-            <el-tag size="small" effect="plain">{{ node.position }}</el-tag>
-            <span class="user-department">{{ node.departmentName }}</span>
-          </span>
-        </template>
-        
-        <!-- 部门计数 -->
-        <template v-else-if="!node.isLeaf">
-          <span class="el-tree-node__dept-count">
-            <el-tag 
-              size="small" 
-              type="info" 
-              effect="plain"
-              :class="{'dept-tag': true}"
-            >
-              {{ getChildrenCount(node) }}
-            </el-tag>
-          </span>
-        </template>
-      </span>
+      <!-- 文本 -->
+      <span v-if="node.matched" class="el-tree-node__label-text matched">{{ node.name }}</span>
+      <span v-else class="el-tree-node__label-text">{{ node.name }}</span>
+
+      <!-- 用户附加信息 -->
+      <span v-if="isUser && node.position" class="el-tree-node__extra-info">{{ node.position }}</span>
     </span>
   </div>
 </template>
@@ -98,48 +65,72 @@ import {
   FolderOpened,
   User
 } from '@element-plus/icons-vue';
-import { ElCheckbox, ElAvatar, ElTag } from 'element-plus';
+import { ElIcon, ElCheckbox, ElAvatar } from 'element-plus';
 
+/**
+ * 树节点组件props定义
+ */
 const props = defineProps({
+  /**
+   * 节点数据
+   */
   node: {
     type: Object,
     required: true
   },
+  /**
+   * 是否可选中
+   */
   checkable: {
+    type: Boolean,
+    default: false
+  },
+  /**
+   * 是否处于加载状态
+   */
+  loading: {
     type: Boolean,
     default: false
   }
 });
 
+/**
+ * 定义事件
+ */
 const emit = defineEmits(['toggle', 'select', 'check']);
 
+/**
+ * 判断是否为用户节点
+ */
 const isUser = computed(() => props.node.type === 'user');
-const loading = computed(() => props.node.loading);
-const hasChildren = computed(() =>
-  Array.isArray(props.node.children) && props.node.children.length > 0
-);
-const showExpander = computed(() =>
-  !isUser.value && (hasChildren.value || loading.value || (!props.node.isLeaf && !loading.value))
-);
 
-// 获取子节点数量（用于显示部门人员计数）
-const getChildrenCount = (node) => {
-  return node.children?.length || 0;
-};
+/**
+ * 是否显示展开图标
+ */
+const showExpander = computed(() => {
+  if (isUser.value) return false;
+  return Array.isArray(props.node.children) && props.node.children.length > 0;
+});
 
-// 处理点击展开/折叠图标
+/**
+ * 处理展开/折叠图标点击
+ */
 function handleExpanderClick(e) {
   if (showExpander.value) {
     emit('toggle', props.node.id);
   }
 }
 
-// 处理点击节点选择
+/**
+ * 处理节点点击
+ */
 function handleNodeClick() {
   emit('select', props.node.id);
 }
 
-// 处理复选框点击
+/**
+ * 处理复选框点击
+ */
 function handleCheckboxClick(checked) {
   emit('check', props.node.id, checked);
 }
@@ -147,78 +138,77 @@ function handleCheckboxClick(checked) {
 
 <style lang="scss" scoped>
 .el-tree-node {
-  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  padding: 0 3px;
+  height: 100%;
+  cursor: pointer;
+  white-space: nowrap;
+  outline: none;
   
-  &.is-user-node {
-    .el-tree-node__icon {
-      .el-avatar {
-        vertical-align: middle;
-        margin-right: 5px;
-        background-color: var(--el-color-primary);
-        
-        &.default-avatar {
-          color: #fff;
-        }
-      }
-    }
-    
-    .el-tree-node__user-info {
-      margin-left: 8px;
-      display: flex;
-      align-items: center;
-      
-      .el-tag {
-        margin-right: 8px;
-        font-size: 12px;
-      }
-      
-      .user-department {
-        font-size: 12px;
-        color: var(--el-text-color-secondary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-    }
-  }
-  
-  &.is-matched {
-    background-color: var(--el-color-warning-light-9);
-    
-    .el-tree-node__label-text.matched {
-      color: var(--el-color-danger);
-      font-weight: bold;
-    }
-  }
-  
-  .el-tree-node__label {
-    display: flex;
-    align-items: center;
-    
-    .el-tree-node__content {
-      display: flex;
-      align-items: center;
-      flex: 1;
-      min-width: 0;
-    }
-    
-    .el-tree-node__dept-count {
-      margin-left: 8px;
-      
-      .dept-tag {
-        font-size: 11px;
-      }
-    }
-  }
-  
-  .el-tree-node__expand-icon {
-    .expanded {
-      transform: rotate(90deg);
-    }
+  &:hover {
+    background-color: var(--el-fill-color-light);
   }
   
   &.is-current {
     background-color: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+  }
+
+  &.is-matched {
+    .matched {
+      color: var(--el-color-danger);
+      font-weight: bold;
+    }
+  }
+
+  &.is-user-node {
+    padding-right: 8px;
+  }
+  
+  .el-tree-node__expand-icon {
+    padding: 6px;
+    cursor: pointer;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    transform: rotate(0deg);
+    transition: transform 0.3s ease-in-out;
+    
+    &.expanded {
+      transform: rotate(90deg);
+    }
+    
+    &.is-leaf {
+      visibility: hidden;
+      cursor: default;
+    }
+
+    .is-expanded {
+      transform: rotate(90deg);
+    }
+  }
+  
+  .el-tree-node__label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    
+    .el-tree-node__icon {
+      margin-right: 8px;
+      color: var(--el-text-color-secondary);
+    }
+    
+    .el-tree-node__label-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .el-tree-node__extra-info {
+      margin-left: 8px;
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
   }
 }
 </style> 

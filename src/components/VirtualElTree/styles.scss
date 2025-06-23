@@ -1,4 +1,138 @@
-/* VirtualElTree/styles.scss */
+/**
+ * 虚拟树组件样式
+ * 遵循Element Plus设计风格
+ */
+
+/* Element Plus变量导入 */
+@import 'element-plus/theme-chalk/src/common/var';
+
+/* 树组件容器样式 */
+.virtual-el-tree-container {
+  width: 100%;
+  position: relative;
+
+  /* 搜索框样式 */
+  .virtual-el-tree-search {
+    margin-bottom: 8px;
+  }
+
+  /* 加载状态样式 */
+  .virtual-el-tree-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+  }
+
+  /* 树内容样式 */
+  .virtual-el-tree-content {
+    border: 1px solid var(--el-border-color);
+    border-radius: var(--el-border-radius-base);
+    overflow: auto;
+    position: relative;
+    will-change: transform; /* 性能优化 */
+  }
+
+  /* 人员节点样式 */
+  .is-user-node {
+    .el-tree-node__icon {
+      .el-avatar {
+        vertical-align: middle;
+        margin-right: 5px;
+      }
+    }
+  }
+
+  /* 已选数量显示 */
+  .virtual-el-tree-selected-count {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: var(--el-color-primary);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    z-index: 10;
+  }
+
+  /* 复选框样式调整 */
+  :deep(.el-checkbox) {
+    margin-right: 8px;
+  }
+
+  /* 节点容器样式 */
+  .virtual-el-tree-node-container {
+    contain: content; /* 性能优化：限制重排和重绘范围 */
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  /* 搜索匹配高亮 */
+  .el-tree-node.is-matched {
+    .matched {
+      color: var(--el-color-danger);
+      font-weight: bold;
+    }
+  }
+
+  /* 搜索指示器 */
+  .virtual-el-tree-search-indicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 2px 8px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+    .el-icon {
+      margin-right: 4px;
+    }
+  }
+
+  /* 性能优化相关样式 */
+  .virtual-el-tree-height-holder {
+    will-change: transform; /* 提示浏览器对元素进行独立处理，优化性能 */
+    contain: strict; /* 强制隔离元素的渲染 */
+    position: relative;
+  }
+
+  /* RTL支持 */
+  &.is-rtl {
+    direction: rtl;
+
+    .el-tree-node {
+      padding-right: 0;
+      padding-left: 0;
+    }
+
+    .virtual-el-tree-selected-count {
+      right: auto;
+      left: 8px;
+    }
+  }
+}
+
+/* 响应式适配 */
+@media screen and (max-width: 768px) {
+  .virtual-el-tree-container {
+    .virtual-el-tree-node-container {
+      padding-right: 0;
+    }
+
+    .virtual-el-tree-selected-count {
+      bottom: 4px;
+      right: 4px;
+      font-size: 10px;
+      padding: 1px 6px;
+    }
+  }
+}
 
 .virtual-el-tree-container {
   .el-tree-node {

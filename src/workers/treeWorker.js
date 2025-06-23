@@ -1,13 +1,14 @@
 /**
- * Tree Worker - 多线程处理树数据计算
+ * 树组件Web Worker
+ * 用于计算密集型任务处理，避免主线程阻塞
  */
 
 // 全局状态
 let nodeMap = new Map();
 let visibilityCache = new Map();
-const NODE_HEIGHT = 40; // 与主线程保持一致
+const NODE_HEIGHT = 40; // 默认节点高度，应与主线程保持一致
 
-// 处理来自主线程的消息
+// 监听来自主线程的消息
 self.onmessage = function(e) {
   const { type } = e.data;
 
@@ -19,18 +20,23 @@ self.onmessage = function(e) {
 
     case 'updateVisibleNodes':
       const { scrollTop, viewportHeight, buffer } = e.data;
-      const result = calculateVisibleNodes(
-        scrollTop,
-        viewportHeight,
-        NODE_HEIGHT,
+      const { visibleNodes, totalHeight, visibleCount } = calculateVisibleNodes(
+        scrollTop, 
+        viewportHeight, 
+        NODE_HEIGHT, 
         buffer
       );
-      self.postMessage({ type: 'visibleNodesUpdated', ...result });
+      self.postMessage({ 
+        type: 'visibleNodesUpdated', 
+        visibleNodes, 
+        totalHeight,
+        visibleCount 
+      });
       break;
 
     case 'toggleNode':
-      const { nodeId, expanded } = e.data;
-      toggleNodeExpanded(nodeId, expanded);
+      const { nodeId } = e.data;
+      toggleNodeExpanded(nodeId);
       break;
 
     case 'search':
@@ -41,7 +47,10 @@ self.onmessage = function(e) {
   }
 };
 
-// 初始化数据
+/**
+ * 初始化Worker数据
+ * @param {Array} flattenedData 扁平化的树数据
+ */
 function initializeData(flattenedData) {
   nodeMap.clear();
   visibilityCache.clear();
@@ -59,12 +68,18 @@ function initializeData(flattenedData) {
   });
 }
 
-// 计算可见节点
-function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
+/**
+ * 计算可见节点
+ * @param {Number} scrollTop 滚动位置
+ * @param {Number} viewportHeight 可视区域高度
+ * @param {Number} nodeHeight 节点高度
+ * @param {Number} buffer 缓冲区大小
+ * @returns {Object} 可见节点信息
+ */
+function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer = 5) {
   const visibleNodes = [];
   let accumulatedHeight = 0;
   let currentIndex = 0;
-  let visibleCount = 0;
 
   // 遍历所有节点，计算可见性和位置
   for (const [id, node] of nodeMap.entries()) {
@@ -72,7 +87,6 @@ function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
 
     if (isVisible) {
       const offsetTop = accumulatedHeight;
-      visibleCount++;
 
       // 检查节点是否在可视区域内（包括缓冲区）
       if (offsetTop >= scrollTop - (buffer * nodeHeight) &&
@@ -93,12 +107,17 @@ function calculateVisibleNodes(scrollTop, viewportHeight, nodeHeight, buffer) {
   return {
     visibleNodes,
     totalHeight: accumulatedHeight,
-    visibleCount
+    visibleCount: currentIndex
   };
 }
 
-// 节点可见性判断（带缓存）
+/**
+ * 节点可见性判断（带缓存）
+ * @param {Object} node 节点对象
+ * @returns {Boolean} 节点是否可见
+ */
 function isNodeVisible(node) {
+  // 使用缓存避免重复计算
   if (visibilityCache.has(node.id)) {
     return visibilityCache.get(node.id);
   }
@@ -122,62 +141,22 @@ function isNodeVisible(node) {
     currentNode = parent;
   }
 
-  // 搜索过滤
-  if (node.searchActive && !node.matched) {
-    isVisible = false;
-  }
-
   visibilityCache.set(node.id, isVisible);
   return isVisible;
 }
 
-// 计算树的总高度
-function calculateTotalHeight() {
-  let visibleNodeCount = 0;
-  for (const [id, node] of nodeMap.entries()) {
-    if (isNodeVisible(node)) {
-      visibleNodeCount++;
-    }
-  }
-  return visibleNodeCount * NODE_HEIGHT;
-}
-
-// 切换节点展开状态
-function toggleNodeExpanded(nodeId, expanded) {
-  const node = nodeMap.get(nodeId);
-  if (!node) return;
-
-  node.expanded = expanded;
-
-  // 清除可见性缓存，因为展开状态变化会影响子节点可见性
-  visibilityCache.clear();
-
-  // 重新计算树高度，通知主线程更新
-  const newHeight = calculateTotalHeight();
-  self.postMessage({
-    type: 'nodeToggled',
-    nodeId,
-    expanded,
-    totalHeight: newHeight
-  });
-}
-
-// 搜索节点
+/**
+ * 搜索节点
+ * @param {String} term 搜索关键词
+ * @returns {Object} 搜索结果
+ */
 function searchNodes(term) {
-  // 重置搜索状态
-  for (const [id, node] of nodeMap.entries()) {
-    delete node.matched;
-  }
-  
-  // 清除可见性缓存
-  visibilityCache.clear();
-  
-  // 标记是否在搜索模式
-  for (const [id, node] of nodeMap.entries()) {
-    node.searchActive = !!term;
-  }
-  
   if (!term) {
+    // 重置搜索状态
+    for (const [id, node] of nodeMap.entries()) {
+      delete node.matched;
+    }
+    visibilityCache.clear();
     return { matchCount: 0, matches: [] };
   }
 
@@ -186,12 +165,11 @@ function searchNodes(term) {
 
   // 标记匹配的节点
   for (const [id, node] of nodeMap.entries()) {
-    // 增强搜索：搜索名称、职位、部门名称、电话、邮箱
+    // 部门和人员都支持搜索
     const isMatch = node.name.toLowerCase().includes(termLower) ||
-                   (node.email && node.email.toLowerCase().includes(termLower)) ||
-                   (node.position && node.position.toLowerCase().includes(termLower)) ||
-                   (node.phone && node.phone.toLowerCase().includes(termLower)) ||
-                   (node.departmentName && node.departmentName.toLowerCase().includes(termLower));
+                  (node.email && node.email.toLowerCase().includes(termLower)) ||
+                  (node.position && node.position.toLowerCase().includes(termLower));
+    
     node.matched = isMatch;
     if (isMatch) {
       matches.push(node.id);
@@ -205,13 +183,47 @@ function searchNodes(term) {
     });
   }
 
+  // 清除可见性缓存，因为展开状态已改变
+  visibilityCache.clear();
+
   return {
     matchCount: matches.length,
     matches
   };
 }
 
-// 展开包含节点的所有父路径
+/**
+ * 展开/折叠节点
+ * @param {String} nodeId 节点ID
+ * @returns {Boolean} 操作是否成功
+ */
+function toggleNodeExpanded(nodeId) {
+  const node = nodeMap.get(nodeId);
+  if (!node) return false;
+
+  // 更新展开状态
+  node.expanded = !node.expanded;
+  
+  // 清除可见性缓存，重新计算可见节点
+  visibilityCache.clear();
+
+  // 重新计算总高度
+  const totalHeight = calculateTotalHeight();
+
+  self.postMessage({
+    type: 'nodeToggled',
+    nodeId,
+    expanded: node.expanded,
+    totalHeight
+  });
+
+  return true;
+}
+
+/**
+ * 展开包含节点的所有父路径
+ * @param {String} nodeId 节点ID
+ */
 function expandNodePath(nodeId) {
   let currentId = nodeMap.get(nodeId)?.parentId;
 
@@ -224,4 +236,20 @@ function expandNodePath(nodeId) {
       break;
     }
   }
+}
+
+/**
+ * 计算树总高度
+ * @returns {Number} 总高度
+ */
+function calculateTotalHeight() {
+  let visibleCount = 0;
+  
+  for (const [id, node] of nodeMap.entries()) {
+    if (isNodeVisible(node)) {
+      visibleCount++;
+    }
+  }
+
+  return visibleCount * NODE_HEIGHT;
 } 

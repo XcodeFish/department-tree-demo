@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { ElCard, ElButton, ElSwitch, ElMessage, ElTable, ElTableColumn, ElDialog } from 'element-plus';
+import { ElCard, ElButton, ElSwitch, ElMessage, ElTable, ElTableColumn, ElDialog, ElInputNumber } from 'element-plus';
 import VirtualElTree from './components/VirtualElTree/index.vue';
 import { generateTestTreeData } from './utils/treeUtils';
 
@@ -16,10 +16,11 @@ const visibleNodeCount = ref(0);
 const selectedUsers = ref([]);
 const isDetailDialogVisible = ref(false);
 const currentUser = ref(null);
+const dataSize = ref(1000);
 
 // 初始化时加载数据
 onMounted(() => {
-  generateMediumData();
+  generateData();
 });
 
 // 处理节点选择
@@ -98,23 +99,202 @@ const showUserDetail = (user) => {
   currentUser.value = user;
   isDetailDialogVisible.value = true;
 };
+
+// 节点总数
+const nodeCount = computed(() => {
+  let count = 0;
+  const countNodes = (nodes) => {
+    if (!nodes) return;
+    count += nodes.length;
+    nodes.forEach(node => {
+      if (node.children) countNodes(node.children);
+    });
+  };
+  countNodes(treeData.value);
+  return count;
+});
+
+// 生成测试数据
+const generateData = () => {
+  loading.value = true;
+  
+  // 使用setTimeout避免UI阻塞
+  setTimeout(() => {
+    try {
+      const size = dataSize.value;
+      const maxDepth = 6;
+      const maxChildrenPerNode = 8;
+      
+      // 随机姓氏
+      const familyNames = ['李', '王', '张', '刘', '陈', '杨', '赵', '黄', '周', '吴', 
+                          '徐', '孙', '胡', '朱', '高', '林', '何', '郭', '马', '罗'];
+      
+      // 随机名字
+      const givenNames = ['伟', '芳', '娜', '秀英', '敏', '静', '丽', '强', '磊', '军', 
+                        '洋', '勇', '艳', '杰', '娟', '涛', '明', '超', '秀兰', '霞'];
+      
+      // 随机职位
+      const positions = ['经理', '主管', '总监', '专员', '助理', '工程师', '设计师', '分析师', 
+                        '顾问', '总裁', '副总裁', '实习生', '总经理', '董事长', '技术总监'];
+      
+      // 随机部门名称
+      const deptNames = [
+        '技术部', '市场部', '销售部', '人力资源部', '财务部', '产品部', '客服部',
+        '研发部', '行政部', '运营部', '设计部', '法务部', '采购部', '质量部', '战略部'
+      ];
+      
+      // 生成随机用户
+      const generateRandomUser = (parentId, level, index) => {
+        const id = `user-${parentId}-${level}-${index}`;
+        const familyName = familyNames[Math.floor(Math.random() * familyNames.length)];
+        const givenName = givenNames[Math.floor(Math.random() * givenNames.length)];
+        const position = positions[Math.floor(Math.random() * positions.length)];
+        
+        return {
+          id,
+          name: familyName + givenName,
+          type: 'user',
+          parentId,
+          email: `${familyName.toLowerCase()}${givenName.toLowerCase()}@example.com`,
+          position,
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`
+        };
+      };
+      
+      // 生成随机部门
+      const generateRandomDept = (parentId, level, index, remaining) => {
+        if (level >= maxDepth || remaining <= 0) return null;
+        
+        const id = `dept-${parentId ? parentId : 'root'}-${level}-${index}`;
+        const name = `${deptNames[Math.floor(Math.random() * deptNames.length)]}${index+1}`;
+        
+        // 决定子节点数量
+        const childrenCount = Math.min(
+          Math.floor(Math.random() * maxChildrenPerNode) + 1,
+          remaining
+        );
+        
+        // 决定有多少子部门和多少用户
+        const deptCount = Math.floor(Math.random() * childrenCount * 0.3);
+        const userCount = childrenCount - deptCount;
+        
+        // 生成子部门
+        const children = [];
+        let remainingNodes = remaining - 1; // 减去当前节点
+        
+        for (let i = 0; i < deptCount && remainingNodes > 0; i++) {
+          const child = generateRandomDept(id, level + 1, i, remainingNodes);
+          if (child) {
+            children.push(child);
+            // 减去这个部门及其所有子节点
+            const nodeCount = countTreeNodes(child);
+            remainingNodes -= nodeCount;
+          }
+        }
+        
+        // 生成用户
+        for (let i = 0; i < userCount && remainingNodes > 0; i++) {
+          children.push(generateRandomUser(id, level + 1, i));
+          remainingNodes--;
+        }
+        
+        return {
+          id,
+          name,
+          type: 'department',
+          children: children.length > 0 ? children : undefined
+        };
+      };
+      
+      // 计算树节点总数
+      const countTreeNodes = (node) => {
+        if (!node) return 0;
+        let count = 1; // 当前节点
+        if (node.children) {
+          node.children.forEach(child => {
+            count += countTreeNodes(child);
+          });
+        }
+        return count;
+      };
+      
+      // 生成根部门
+      const rootDepts = [];
+      let remaining = size;
+      let rootIndex = 0;
+      
+      while (remaining > 0) {
+        const dept = generateRandomDept(null, 0, rootIndex, remaining);
+        if (dept) {
+          rootDepts.push(dept);
+          const nodeCount = countTreeNodes(dept);
+          remaining -= nodeCount;
+          rootIndex++;
+        } else {
+          break;
+        }
+      }
+      
+      treeData.value = rootDepts;
+    } catch (error) {
+      console.error('生成数据出错:', error);
+    } finally {
+      loading.value = false;
+    }
+  }, 100);
+};
+
+// 处理节点检查
+const handleCheck = (keys, info) => {
+  console.log('勾选节点:', keys, info);
+};
 </script>
 
 <template>
   <div class="app-container">
-    <h1>Vue3 部门树组件</h1>
+    <h1>部门树组件演示</h1>
+    
+    <div class="demo-controls">
+      <el-switch
+        v-model="performanceMode"
+        active-text="性能模式"
+        inactive-text="普通模式"
+      />
+      <el-button type="primary" @click="generateData">生成测试数据</el-button>
+      <el-input-number v-model="dataSize" :min="100" :max="10000" :step="500" />个节点
+    </div>
+    
+    <el-card class="tree-card">
+      <template #header>
+        <div class="card-header">
+          <span>虚拟树组件 ({{ treeData.length ? `${nodeCount}个节点` : '无数据' }})</span>
+          <div class="stats" v-if="treeData.length">
+            可见节点: {{ visibleNodeCount }} 
+          </div>
+        </div>
+      </template>
+      
+      <virtual-el-tree
+        :tree-data="treeData"
+        :height="500"
+        :loading="loading"
+        :performance-mode="performanceMode"
+        show-search
+        search-placeholder="请输入部门/人员名称搜索"
+        multiple
+        checkable
+        @select="handleSelect"
+        @check="handleCheck"
+        @expand="handleExpand"
+        @visible-nodes-change="handleVisibleNodesChange"
+      />
+    </el-card>
     
     <el-card title="部门树Demo" class="department-tree-card">
       <template #header>
         <div class="card-header">
           <span>部门树 Demo</span>
           <div class="controls">
-            <el-switch
-              v-model="performanceMode"
-              active-text="性能模式"
-              inactive-text="普通模式"
-              class="ctrl-item"
-            />
             <el-switch
               v-model="showSearch"
               active-text="搜索"
@@ -240,6 +420,28 @@ const showUserDetail = (user) => {
     margin-bottom: 20px;
     color: var(--el-color-primary);
   }
+}
+
+.demo-controls {
+  margin-bottom: 20px;
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.tree-card {
+  margin-bottom: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stats {
+  font-size: 14px;
+  color: #666;
 }
 
 .department-tree-card {
