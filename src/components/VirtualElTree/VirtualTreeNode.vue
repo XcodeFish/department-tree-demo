@@ -121,10 +121,9 @@ function handleExpanderClick(e) {
  * 处理节点点击选择
  */
 function handleNodeClick() {
+  // 发送选择事件，由父组件处理
+  // 父组件会同步处理节点选中和复选框状态的同步
   emit('select', props.node.id);
-  
-  // 注意：我们在VirtualElTree/index.vue中已经处理了选中节点时自动更新复选框状态
-  // 这里不再重复触发复选框状态变化，以避免循环调用
 }
 
 /**
@@ -132,6 +131,8 @@ function handleNodeClick() {
  * @param {Boolean} checked - 选中状态
  */
 function handleCheckboxClick(checked) {
+  // 发送复选框选中事件，由父组件处理
+  // 父组件会同步处理节点选中和复选框状态的同步
   emit('check', props.node.id, checked);
 }
 </script>

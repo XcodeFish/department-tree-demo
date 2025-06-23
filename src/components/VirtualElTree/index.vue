@@ -183,6 +183,29 @@ const indeterminateKeys = ref([]);
 const visibilityCache = ref(new Map());
 const nodeMapRef = ref(new Map());
 
+// 初始化时同步选中状态和复选框状态
+onMounted(() => {
+  if (props.checkable) {
+    // 确保defaultSelectedKeys中的节点在checkedKeys中
+    if (props.defaultSelectedKeys && props.defaultSelectedKeys.length > 0) {
+      props.defaultSelectedKeys.forEach(nodeId => {
+        if (!checkedKeys.value.includes(nodeId)) {
+          checkedKeys.value.push(nodeId);
+        }
+      });
+    }
+    
+    // 确保defaultCheckedKeys中的节点在selectedKeys中
+    if (props.defaultCheckedKeys && props.defaultCheckedKeys.length > 0) {
+      props.defaultCheckedKeys.forEach(nodeId => {
+        if (!selectedKeys.value.includes(nodeId)) {
+          selectedKeys.value.push(nodeId);
+        }
+      });
+    }
+  }
+});
+
 // 处理树数据
 const processedData = computed(() => {
   const processed = processTreeData(props.treeData || []);
@@ -254,15 +277,72 @@ function handleSelect(nodeId) {
     if (index > -1) {
       // 如果已选中，则移除
       selectedKeys.value.splice(index, 1);
+      
+      // 同步更新复选框状态
+      if (props.checkable) {
+        // 从复选框中也移除
+        const checkIndex = checkedKeys.value.indexOf(nodeId);
+        if (checkIndex > -1) {
+          checkedKeys.value.splice(checkIndex, 1);
+          
+          // 如果启用级联选择
+          if (!props.checkStrictly) {
+            const node = nodeMapRef.value.get(nodeId);
+            if (node) {
+              // 更新子节点状态
+              updateChildrenChecked(node, false);
+              // 更新父节点状态
+              updateParentChecked(node);
+            }
+          }
+        }
+      }
+      
       emit('select', [...selectedKeys.value], { selected: false, nodeIds: [nodeId] });
     } else {
       // 如果未选中，则添加
       selectedKeys.value.push(nodeId);
+      
+      // 同步更新复选框状态
+      if (props.checkable && !checkedKeys.value.includes(nodeId)) {
+        checkedKeys.value.push(nodeId);
+        
+        // 如果启用级联选择
+        if (!props.checkStrictly) {
+          const node = nodeMapRef.value.get(nodeId);
+          if (node) {
+            // 更新子节点状态
+            updateChildrenChecked(node, true);
+            // 更新父节点状态
+            updateParentChecked(node);
+          }
+        }
+      }
+      
       emit('select', [...selectedKeys.value], { selected: true, nodeIds: [nodeId] });
     }
   } else {
     // 单选模式
     selectedKeys.value = [nodeId];
+    
+    // 同步更新复选框状态
+    if (props.checkable) {
+      // 清空之前的选中状态
+      const oldCheckedKeys = [...checkedKeys.value];
+      checkedKeys.value = [nodeId];
+      
+      // 如果启用级联选择，处理子节点
+      if (!props.checkStrictly) {
+        const node = nodeMapRef.value.get(nodeId);
+        if (node) {
+          // 更新子节点状态
+          updateChildrenChecked(node, true);
+          // 更新父节点状态
+          updateParentChecked(node);
+        }
+      }
+    }
+    
     emit('select', selectedKeys.value, { node: nodeMapRef.value.get(nodeId), selected: true });
   }
 }
@@ -296,6 +376,12 @@ function handleCheck(nodeId, checked) {
     // 如果已选中且取消选中
     checkedKeys.value.splice(index, 1);
     
+    // 同步更新节点选中状态
+    const selectedIndex = selectedKeys.value.indexOf(nodeId);
+    if (selectedIndex > -1) {
+      selectedKeys.value.splice(selectedIndex, 1);
+    }
+    
     // 严格模式下不处理关联节点
     if (!props.checkStrictly) {
       // 更新子节点状态
@@ -307,6 +393,11 @@ function handleCheck(nodeId, checked) {
   } else if (index === -1 && checked) {
     // 如果未选中且选中
     checkedKeys.value.push(nodeId);
+    
+    // 同步更新节点选中状态
+    if (!selectedKeys.value.includes(nodeId)) {
+      selectedKeys.value.push(nodeId);
+    }
     
     // 严格模式下不处理关联节点
     if (!props.checkStrictly) {
@@ -330,11 +421,21 @@ function updateChildrenChecked(node, checked) {
     const childNode = nodeMapRef.value.get(childId);
     if (!childNode) return;
     
-    const index = checkedKeys.value.indexOf(childId);
-    if (checked && index === -1) {
+    const checkIndex = checkedKeys.value.indexOf(childId);
+    const selectedIndex = selectedKeys.value.indexOf(childId);
+    
+    // 更新复选框状态
+    if (checked && checkIndex === -1) {
       checkedKeys.value.push(childId);
-    } else if (!checked && index > -1) {
-      checkedKeys.value.splice(index, 1);
+    } else if (!checked && checkIndex > -1) {
+      checkedKeys.value.splice(checkIndex, 1);
+    }
+    
+    // 同步更新节点选中状态
+    if (checked && selectedIndex === -1) {
+      selectedKeys.value.push(childId);
+    } else if (!checked && selectedIndex > -1) {
+      selectedKeys.value.splice(selectedIndex, 1);
     }
     
     // 递归处理子节点的子节点
@@ -498,6 +599,33 @@ watch(() => props.treeData, async () => {
     totalTreeHeight.value = 0;
   }
 }, { immediate: true });
+
+// 监听选中状态变化，自动同步复选框状态
+watch(selectedKeys, (newSelected) => {
+  if (props.checkable) {
+    // 确保所有选中的节点也在复选框选中状态中
+    newSelected.forEach(nodeId => {
+      if (!checkedKeys.value.includes(nodeId)) {
+        checkedKeys.value.push(nodeId);
+        
+        // 如果启用级联选择，更新关联节点
+        if (!props.checkStrictly) {
+          const node = nodeMapRef.value.get(nodeId);
+          if (node) {
+            updateChildrenChecked(node, true);
+            updateParentChecked(node);
+          }
+        }
+      }
+    });
+  }
+}, { deep: true });
+
+// 监听复选框状态变化，自动同步选中状态
+watch(checkedKeys, (newChecked) => {
+  // 暂时不需要实现，因为复选框变化时不一定要同步选中状态
+  // 但如果有特殊需求，可以在此实现
+}, { deep: true });
 
 // 清理资源
 onUnmounted(() => {
